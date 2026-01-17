@@ -1,99 +1,176 @@
 # Gmail Chatbot Project
 
-This repository contains a full-stack application that acts as a Gmail Agent with a Chatbot UI. It uses **Composio** and **Groq** for the AI agent backend and **Next.js** for the frontend interface.
+An AI-powered Gmail assistant with a modern chat interface. Send emails, create drafts, and fetch your inbox using natural language commands.
 
-## Project Structure
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green.svg)](https://fastapi.tiangolo.com)
 
-- `gmail-agent/`: The backend API service built with Python and FastAPI.
-- `gmail-chatbot-ui/`: The frontend user interface built with Next.js.
+## ✨ Features
 
-## Prerequisites
+- 📧 **Send Emails** - Send emails using natural language commands
+- 📝 **Create Drafts** - Create email drafts with AI-generated content
+- 📬 **Fetch Emails** - Retrieve recent emails from your inbox
+- 🤖 **AI-Powered** - Uses Groq's Llama 3.3 70B for intent parsing
+- 🔐 **OAuth Integration** - Secure Gmail authentication via Composio
 
-- **Python** (3.8+)
-- **Node.js** (18+)
-- **uv** (An extremely fast Python package installer and resolver) - [Installation Guide](https://github.com/astral-sh/uv)
-- API Keys:
-  - **Composio API Key**
-  - **Groq API Key**
+## 🏗️ Architecture
 
-## Getting Started
+```
+┌─────────────────────┐     ┌─────────────────────┐
+│   Next.js Frontend  │────▶│   FastAPI Backend   │
+│   (localhost:3000)  │     │   (localhost:8000)  │
+└─────────────────────┘     └──────────┬──────────┘
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                     ▼
+           ┌─────────────────┐                 ┌─────────────────┐
+           │    Groq LLM     │                 │   Composio API  │
+           │ (Intent Parse)  │                 │  (Gmail Tools)  │
+           └─────────────────┘                 └─────────────────┘
+```
 
-Follow these steps to set up and run the project.
+## 📁 Project Structure
 
-### 1. Backend Setup (`gmail-agent`)
+```
+composio-agent/
+├── gmail-agent/              # Backend API (Python/FastAPI)
+│   ├── server/
+│   │   ├── api.py           # API routes
+│   │   ├── actions.py       # Gmail operations
+│   │   ├── auth.py          # OAuth authentication
+│   │   ├── chatbot.py       # AI chat logic
+│   │   ├── models.py        # Pydantic schemas
+│   │   └── dependencies.py  # Dependency injection
+│   ├── requirements.txt
+│   └── Makefile
+├── gmail-chatbot-ui/         # Frontend UI (Next.js)
+│   └── src/app/
+│       ├── page.tsx         # Chat interface
+│       ├── layout.tsx       # Root layout
+│       └── globals.css      # Tailwind styles
+└── docs/                     # Documentation
+    ├── README.md            # Full documentation
+    ├── BACKEND.md           # Backend details
+    ├── FRONTEND.md          # Frontend details
+    ├── API.md               # API reference
+    └── SETUP.md             # Setup guide
+```
 
-Navigate to the agent directory:
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Python 3.11+**
+- **Node.js 18+**
+- **Composio API Key** - [Get it here](https://app.composio.dev)
+- **Groq API Key** - [Get it here](https://console.groq.com)
+
+### 1. Backend Setup
 
 ```bash
 cd gmail-agent
-```
 
-Create the `.env` file from the example:
-
-```bash
+# Copy environment file
 cp .env.example .env
-```
+# Edit .env and add your COMPOSIO_API_KEY and GROQ_API_KEY
 
-**Important:** Open the `.env` file and set your `COMPOSIO_API_KEY` and `GROQ_API_KEY`.
+# Install and run (using Make)
+make install
+make dev
 
-Create a virtual environment and install dependencies using `uv`:
-
-```bash
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -r requirements.txt
-```
-
-Run the backend server:
-
-```bash
+# Or manually:
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 uvicorn server.api:app --reload
 ```
 
-The backend API will start at `http://localhost:8000`. You can view the API documentation at `http://localhost:8000/docs`.
+Backend runs at: http://localhost:8000
 
-### 2. Frontend Setup (`gmail-chatbot-ui`)
-
-Open a new terminal and navigate to the UI directory:
+### 2. Frontend Setup
 
 ```bash
 cd gmail-chatbot-ui
-```
 
-Install dependencies:
-
-```bash
 npm install
-# or yarn install / pnpm install / bun install
+npm run dev
 ```
 
-Run the development server:
+Frontend runs at: http://localhost:3000
+
+### 3. Connect Gmail
+
+Before using the chatbot, connect your Gmail account:
 
 ```bash
-npm run dev
-# or yarn dev / pnpm dev / bun dev
+# Check if connected
+curl -X POST http://localhost:8000/connection/exists
+
+# If not connected, create connection and follow the OAuth URL
+curl -X POST http://localhost:8000/connection/create \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "default"}'
 ```
 
-The frontend will start at `http://localhost:3000`.
+## 💬 Usage Examples
 
-## Usage
+Open http://localhost:3000 and try these commands:
 
-1. Ensure the backend server is running on port `8000`.
-2. Ensure the frontend server is running on port `3000`.
-3. Open your browser and go to `http://localhost:3000`.
-4. You can now chat with the Gmail Agent to send emails, fetch emails, or create drafts.
+| Command | Action |
+|---------|--------|
+| "Send email to john@example.com about the meeting tomorrow" | Sends an email |
+| "Create a draft for sarah@company.com regarding project update" | Creates a draft |
+| "Show me my recent emails" | Fetches inbox |
+| "Get the last 10 emails" | Fetches 10 emails |
 
-   **Example Commands:**
-   - "Kirim email ke test@example.com tentang meeting besok"
-   - "Ambil email terbaru"
-   - "Buat draft email untuk john@doe.com"
+## 📡 API Endpoints
 
-## API Endpoints (Backend)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/connection/exists` | POST | Check Gmail connection |
+| `/connection/create` | POST | Create new connection |
+| `/connection/status` | POST | Get connection status |
+| `/actions/send_email` | POST | Send an email |
+| `/actions/fetch_emails` | POST | Fetch recent emails |
+| `/actions/create_draft` | POST | Create email draft |
+| `/chat` | POST | AI chat endpoint |
 
-- `POST /connection/exists`: Check connection status.
-- `POST /connection/create`: Create a new connection.
-- `POST /connection/status`: Get connection status.
-- `POST /actions/send_email`: Send an email.
-- `POST /actions/fetch_emails`: Fetch emails.
-- `POST /actions/create_draft`: Create an email draft.
-- `POST /chat`: Chat endpoint used by the frontend.
+📖 Full API docs: http://localhost:8000/docs
+
+## 📚 Documentation
+
+For detailed documentation, see the [docs/](docs/) folder:
+
+- [📖 Full Documentation](docs/README.md) - Complete project documentation
+- [🔧 Backend Guide](docs/BACKEND.md) - Python backend details
+- [🎨 Frontend Guide](docs/FRONTEND.md) - Next.js frontend details
+- [📡 API Reference](docs/API.md) - Complete API documentation
+- [⚙️ Setup Guide](docs/SETUP.md) - Detailed installation instructions
+- [📸 Screenshots & Demo](docs/SCREENSHOTS.md) - Visual documentation
+
+## 🛠️ Tech Stack
+
+**Backend:**
+- FastAPI - Web framework
+- Composio - Gmail integration
+- Groq - LLM API (Llama 3.3 70B)
+- Pydantic - Data validation
+
+**Frontend:**
+- Next.js 16 - React framework
+- React 19 - UI library
+- Tailwind CSS 4 - Styling
+- TypeScript - Type safety
+
+## 📄 License
+
+This project is for educational purposes.
+
+## 🙏 Acknowledgments
+
+- [Composio](https://composio.dev) - For the amazing tool integration platform
+- [Groq](https://groq.com) - For fast LLM inference
+- [FastAPI](https://fastapi.tiangolo.com) - For the excellent Python web framework
+- [Next.js](https://nextjs.org) - For the React framework
