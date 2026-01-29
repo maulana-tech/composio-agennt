@@ -1,5 +1,5 @@
 from composio import Composio
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 
 def execute_tool(composio_client: Composio, user_id: str, tool_slug: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -11,12 +11,16 @@ def execute_tool(composio_client: Composio, user_id: str, tool_slug: str, argume
     )
 
 
-def send_email(composio_client: Composio, user_id: str, recipient_email: str, subject: str, body: str) -> Dict[str, Any]:
+def send_email(composio_client: Composio, user_id: str, recipient_email: str, subject: str, body: str, attachment: Optional[str] = None) -> Dict[str, Any]:
+    arguments = {"recipient_email": recipient_email, "subject": subject, "body": body}
+    if attachment:
+        arguments["attachment"] = attachment
+        
     return execute_tool(
         composio_client=composio_client,
         user_id=user_id,
         tool_slug="GMAIL_SEND_EMAIL",
-        arguments={"recipient_email": recipient_email, "subject": subject, "body": body}
+        arguments=arguments
     )
 
 
