@@ -1,6 +1,15 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-composio==0.10.7
+composio
+composio-langchain
 python-dotenv==1.0.1
 pydantic==2.10.5
 httpx==0.28.1
+langchain
+langgraph
+langchain-groq
+tavily-python
+markdown
+fpdf2
+Pillow
+python-multipart
