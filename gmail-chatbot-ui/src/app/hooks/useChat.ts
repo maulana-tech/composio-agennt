@@ -1,6 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Session, Message, AgentLog, FilePreview } from "../types";
 import { API_URL, needsAgentPanel, detectLogType } from "../utils/constants";
+
+// Generate unique IDs to prevent duplicate key issues
+const generateId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -17,13 +20,50 @@ export function useChat() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/sessions/${userId}`);
+      setIsLoading(true);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 second timeout
+      const response = await fetch(`${API_URL}/sessions/${userId}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (response.ok) {
         const data = await response.json();
         setSessions(data.sessions || []);
+      } else {
+        setAgentLogs((prev) => [...prev, {
+          id: generateId(),
+          type: "email",
+          title: "Fetch Sessions Failed",
+          detail: `Status: ${response.status}`,
+          status: "error",
+          timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        }]);
       }
     } catch (error) {
-      console.error("Failed to fetch sessions:", error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        setAgentLogs((prev) => [...prev, {
+          id: generateId(),
+          type: "email",
+          title: "Fetch Sessions Timeout",
+          detail: "Request timed out",
+          status: "error",
+          timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        }]);
+        console.error("Request timed out");
+      } else {
+        setAgentLogs((prev) => [...prev, {
+          id: generateId(),
+          type: "email",
+          title: "Fetch Sessions Error",
+          detail: error instanceof Error ? error.message : String(error),
+          status: "error",
+          timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        }]);
+        console.error("Failed to fetch sessions:", error);
+      }
+    } finally {
+      setIsLoading(false);
     }
   }, [userId]);
 
@@ -51,8 +91,16 @@ export function useChat() {
       if (response.ok) {
         const data = await response.json();
         setCurrentSessionId(sessionId);
-        setMessages(data.messages || []);
-        setIsConversationStarted(data.messages && data.messages.length > 0);
+        // Ensure each message has a unique ID (regenerate if needed for old data)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const messagesWithUniqueIds = (data.messages || []).map((msg: any) => ({
+          id: msg.id || generateId(),
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp || new Date(msg.created_at || Date.now()).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+        }));
+        setMessages(messagesWithUniqueIds);
+        setIsConversationStarted(messagesWithUniqueIds.length > 0);
         setShowHistory(false);
         setAgentLogs([]);
         setIsAgentWorking(false);
@@ -96,7 +144,7 @@ export function useChat() {
   const addAgentLog = useCallback((log: Omit<AgentLog, "id" | "timestamp">) => {
     const newLog: AgentLog = {
       ...log,
-      id: Date.now().toString(),
+      id: generateId(),
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
     };
     setAgentLogs((prev) => [...prev, newLog]);
@@ -132,7 +180,7 @@ export function useChat() {
     if (!isConversationStarted) setIsConversationStarted(true);
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: generateId(),
       role: "user",
       content: textToSend,
       timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
@@ -163,7 +211,7 @@ export function useChat() {
       let buffer = "";
       
       // Create empty assistant message to stream into
-      const assistantMsgId = (Date.now() + 1).toString();
+      const assistantMsgId = generateId();
       setMessages((prev) => [...prev, {
         id: assistantMsgId,
         role: "assistant",
@@ -239,15 +287,14 @@ export function useChat() {
       setMessages((prev) => {
          const last = prev[prev.length - 1];
          // Check if we are upgrading the streaming message or adding a new error
-         if (last.role === "assistant" && (last.id === (Date.now() + 1).toString() || last.content === "")) {
-              // We likely have the streaming message ID reference, but we can't clear access it safely here due to closure.
-              // Instead, we just append to the active message if it exists and is the assistant's.
+         if (last && last.role === "assistant" && last.content === "") {
+              // Append error to the existing empty assistant message
               return prev.map((msg, i) => i === prev.length - 1 && msg.role === 'assistant' 
-                  ? { ...msg, content: msg.content + `\n❌ ${error instanceof Error ? error.message : "Connection failed"}` } 
+                  ? { ...msg, content: `❌ ${error instanceof Error ? error.message : "Connection failed"}` } 
                   : msg);
          }
          return [...prev, {
-            id: (Date.now() + 1).toString(),
+            id: generateId(),
             role: "assistant",
             content: `❌ ${error instanceof Error ? error.message : "Connection failed"}`,
             timestamp: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
