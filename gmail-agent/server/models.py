@@ -68,6 +68,7 @@ class ChatRequest(BaseModel):
 
 # ========== Session Models ==========
 
+
 class CreateSessionRequest(BaseModel):
     user_id: str = Field(default="default")
     title: Optional[str] = None
@@ -118,6 +119,34 @@ class UpdateSessionRequest(BaseModel):
 
 # ========== PDF Models ==========
 
+
 class GeneratePDFRequest(BaseModel):
     topic: Optional[str] = None
     logo_url: Optional[str] = None
+
+
+# ========== Email Analysis Models ==========
+
+
+class EmailAnalysisRequest(BaseModel):
+    user_id: str = Field(default="default")
+    email_content: str
+    user_query: Optional[str] = ""
+    generate_pdf: bool = Field(default=True)
+    auto_execute: bool = Field(default=True)
+
+
+class EmailAnalysisResponse(BaseModel):
+    success: bool
+    status: str
+    stages: Optional[dict] = None
+    final_report: Optional[str] = None
+    pdf_path: Optional[str] = None
+    error: Optional[str] = None
+    reply_sent: Optional[dict] = None
+
+
+class FetchSpecificEmailRequest(BaseModel):
+    user_id: str = Field(default="default")
+    email_id: str
+    query: Optional[str] = ""
