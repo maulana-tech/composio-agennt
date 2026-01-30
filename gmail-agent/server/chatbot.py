@@ -67,13 +67,13 @@ async def run_agent_with_fallback(agent_factory, inputs: dict, groq_api_key: str
                 groq_api_key=groq_api_key
             )
             agent = agent_factory(llm, "groq")
-            state = await agent.ainvoke(inputs)
+            state = await agent.ainvoke(inputs, config={"recursion_limit": 15})
             return state, "groq"
         except Exception as e:
-            error_str = str(e)
-            # Check if it's a rate limit error (413 or rate_limit_exceeded)
-            if "413" in error_str or "rate_limit" in error_str.lower() or "tokens" in error_str.lower():
-                print(f"Groq rate limit hit, falling back to Gemini: {e}")
+            error_str = str(e).lower()
+            # Check if it's a rate limit, tool use failure, or generation failure
+            if any(err in error_str for err in ["413", "rate_limit", "tokens", "tool_use_failed", "failed_generation", "failed to call", "adjust your prompt"]):
+                print(f"Groq error ({e}), falling back to Gemini.")
             else:
                 raise e
     
@@ -85,7 +85,7 @@ async def run_agent_with_fallback(agent_factory, inputs: dict, groq_api_key: str
             google_api_key=google_api_key
         )
         agent = agent_factory(llm, "gemini")
-        state = await agent.ainvoke(inputs)
+        state = await agent.ainvoke(inputs, config={"recursion_limit": 15})
         return state, "gemini"
     
     raise ValueError("Groq rate limited and no GOOGLE_API_KEY available for fallback.")
@@ -134,14 +134,17 @@ def create_tavily_tools():
             
             output = []
             if result.get("answer"):
-                output.append(f"**Answer:** {result['answer']}\n")
+                output.append(f"**Summary:** {result['answer']}\n")
             
             output.append(f"**Found {len(result.get('results', []))} results:**\n")
             
             for i, r in enumerate(result.get("results", []), 1):
-                output.append(f"\n{i}. **{r.get('title', 'No title')}**")
-                output.append(f"   URL: {r.get('url', 'N/A')}")
-                output.append(f"   {r.get('content', 'No content')[:500]}...")
+                title = r.get('title', 'No title')
+                url = r.get('url', '')
+                content = r.get('content', 'No content')[:400]
+                # Format as clickable markdown link
+                output.append(f"\n{i}. [{title}]({url})")
+                output.append(f"   {content}...")
                 
             return "\n".join(output)
         except Exception as e:
@@ -287,9 +290,12 @@ def create_serper_tools():
             output = []
             if "organic" in results:
                 for i, r in enumerate(results["organic"][:7], 1):
-                    output.append(f"{i}. **{r.get('title')}**")
-                    output.append(f"   Link: {r.get('link')}")
-                    output.append(f"   Snippet: {r.get('snippet')}\n")
+                    title = r.get('title', 'Untitled')
+                    link = r.get('link', '')
+                    snippet = r.get('snippet', '')
+                    # Format as clickable markdown link
+                    output.append(f"{i}. [{title}]({link})")
+                    output.append(f"   {snippet}\n")
             else:
                 output.append("No results found.")
                 
@@ -447,36 +453,21 @@ def get_agent_tools(user_id: str):
     @tool("GMAIL_SEND_EMAIL")
     def gmail_send_email(recipient_email: str, subject: str, body: str, attachment: str = "") -> str:
         """
-        Send an email using Gmail.
-        
-        Args:
-            recipient_email: The email address of the recipient
-            subject: The subject line of the email
-            body: The content/body of the email
-            attachment: Absolute path to a file to attach (optional). MUST be a real path returned by other tools.
+        Send an email using Gmail. Returns error if attachment is missing.
         """
         try:
             print(f"DEBUG: sending email to {recipient_email}")
-            
-            # Validation
             if not recipient_email or "@" not in str(recipient_email):
-               return "ERROR: 'recipient_email' is missing or invalid. You MUST provide a valid email address."
-            
-            # Relaxed path check
+                return "ERROR: 'recipient_email' is missing or invalid. You MUST provide a valid email address."
             if attachment and "Place holder" in str(attachment):
-               return "ERROR: You are using a placeholder path. You MUST call 'generate_pdf_report_wrapped' first."
-
-            # Race condition fix: Wait for file to exist if it was just generated
+                return "ERROR: You are using a placeholder path. You MUST call 'generate_pdf_report_wrapped' first."
+            # Wait for file to exist if it was just generated
             if attachment:
-                import time
-                import os
-                
-                # Check if it's a filename only, and resolve to abs path if needed
+                import time, os
                 if not os.path.isabs(attachment):
-                     attachment = os.path.abspath(attachment)
-
+                    attachment = os.path.abspath(attachment)
                 print(f"DEBUG: Checking for attachment: {attachment}")
-                retries = 20 # 10 seconds (0.5s sleep)
+                retries = 20
                 while retries > 0:
                     if os.path.exists(attachment):
                         print(f"DEBUG: Attachment found!")
@@ -484,10 +475,8 @@ def get_agent_tools(user_id: str):
                     print(f"DEBUG: Attachment not found yet, waiting... ({retries})")
                     time.sleep(0.5)
                     retries -= 1
-                
                 if not os.path.exists(attachment):
-                     return f"ERROR: Attachment file not found at {attachment}. Did you generate it properly?"
-
+                    raise FileNotFoundError(f"Attachment file not found at {attachment}. Did you generate it properly?")
             args = {
                 "recipient_email": recipient_email,
                 "subject": subject,
@@ -496,10 +485,10 @@ def get_agent_tools(user_id: str):
             }
             if attachment:
                 args["attachment"] = attachment
-                
             return composio_client.tools.execute(slug="GMAIL_SEND_EMAIL", arguments=args, user_id=user_id, dangerously_skip_version_check=True)
         except Exception as e:
-            return f"Error sending email: {str(e)}"
+            print(f"ERROR: {str(e)}")
+            return f"ERROR: {str(e)}"
 
     @tool("GMAIL_CREATE_EMAIL_DRAFT")
     def gmail_create_draft(recipient_email: str, subject: str, body: str, attachment: str = "") -> str:
@@ -520,88 +509,96 @@ def get_agent_tools(user_id: str):
 
     @tool("GMAIL_FETCH_EMAILS")
     def gmail_fetch_emails(limit: int = 5, query: str = "") -> str:
-        """Fetch recent emails from Gmail."""
+        """Fetch recent emails from Gmail. If not found, do not loop, return error."""
         try:
             args = {"limit": limit}
             if query:
                 args["query"] = query
-            return composio_client.tools.execute(slug="GMAIL_FETCH_EMAILS", arguments=args, user_id=user_id, dangerously_skip_version_check=True)
+            result = composio_client.tools.execute(slug="GMAIL_FETCH_EMAILS", arguments=args, user_id=user_id, dangerously_skip_version_check=True)
+            # Check if result contains messages
+            import json
+            try:
+                data = json.loads(result) if isinstance(result, str) else result
+                messages = data.get("data", {}).get("messages", [])
+                if not messages:
+                    if query:
+                        # Coba fetch tanpa query jika query gagal
+                        args.pop("query", None)
+                        result2 = composio_client.tools.execute(slug="GMAIL_FETCH_EMAILS", arguments=args, user_id=user_id, dangerously_skip_version_check=True)
+                        data2 = json.loads(result2) if isinstance(result2, str) else result2
+                        messages2 = data2.get("data", {}).get("messages", [])
+                        if not messages2:
+                            return "ERROR: No emails found in your inbox."
+                        return result2
+                    return "ERROR: No emails found in your inbox."
+            except Exception:
+                pass
+            return result
         except Exception as e:
             return f"Error fetching emails: {str(e)}"
             
     gmail_tools = [gmail_send_email, gmail_create_draft, gmail_fetch_emails]
     
-    # Search Tools (Serper)
+    # Search Tools
+    tavily_tools = create_tavily_tools()
     search_tools = create_serper_tools()
     
     # PDF Generator
     @tool
-    def generate_pdf_report_wrapped(markdown_content: str, filename: str) -> str:
+    def generate_pdf_report_wrapped(markdown_content: str, filename: str = "report.pdf", sender_email: str = "AI Assistant") -> str:
         """
         Generate a professional PDF report from Markdown content.
-        Returns the ABSOLUTE FILE PATH. You MUST use this path for GMAIL_SEND_EMAIL.
+        
+        Args:
+            markdown_content: The markdown text to include in the report.
+            filename: The name of the PDF file to generate.
+            sender_email: The email address to derive a dynamic logo from (e.g., 'user@gmail.com' -> 'user' logo).
+            
+        Returns:
+            The ABSOLUTE FILE PATH that you MUST use for gmail_send_email attachment parameter.
         """
-        print(f"DEBUG: Executing PDF generator for {filename}")
-        path = generate_pdf_report.invoke({"markdown_content": markdown_content, "filename": filename})
+        if not filename:
+            filename = "report.pdf"
+        print(f"DEBUG: Executing PDF generator for {filename} with sender {sender_email}")
+        path = generate_pdf_report.invoke({
+            "markdown_content": markdown_content, 
+            "filename": filename,
+            "sender_email": sender_email
+        })
         print(f"DEBUG: PDF generated at {path}")
         return path
     
     return search_tools + [generate_pdf_report_wrapped] + gmail_tools
 
-# System Prompt
-SYSTEM_PROMPT = """You are a powerful Research & Email Robot with multiple capabilities.
+SYSTEM_PROMPT = """
+You are a proactive Research and Email Assistant. Your goal is to provide high-quality, verified information to the user and their contacts.
 
-AVAILABLE TOOLS:
+CORE WORKFLOW:
+1. Fetch & Analyze: 
+   - Use 'gmail_fetch_emails' to get recent messages or specific context.
+   - Understand the user's goal (e.g., "Research this email and reply").
+2. Deep Research:
+   - Use 'search_google' to find high-quality information.
+   - Use 'visit_webpage' on the top results to extract detailed, factual data.
+3. Chat Presentation (Markdown):
+   - Present a substantive, multi-paragraph research summary in the chat first.
+   - Include key findings, verified facts, and source highlights.
+   - Ask the user for approval or feedback (e.g., "Would you like me to send this report as a PDF reply?").
+4. PDF & Email Execution:
+   - ONLY after approval (e.g., user says "Send it" or "Reply"), call 'generate_pdf_report_wrapped' with the final agreed-upon content.
+   - Use the EXACT path returned for 'attachment' in 'gmail_send_email'.
+   - The email body should also contain a clear, professional summary of the attached report.
 
-1. **WEB SEARCH** (search_google):
-   - Search Google for information, articles, or documents (UU/Perpu)
-   - Inputs: query (string)
-   - Returns top results with titles, links, and snippets
+TOOLS:
+- search_google: Search Google for information.
+- visit_webpage: Extract full content from a URL (always do this for depth).
+- generate_pdf_report_wrapped(markdown_content, filename, sender_email) → Returns the ABSOLUTE FILE PATH.
+- gmail_send_email(recipient_email, subject, body, attachment) → Send email.
 
-2. **VISIT WEBPAGE** (visit_webpage):
-   - Read full content of a webpage (HTML/PDF/DOCX) to get details for the report
-   - Inputs: url (string)
-   - USE THIS when you want to summarize content into a NEW report.
-
-3. **DOWNLOAD FILE** (download_file):
-   - Download the actual file (PDF/DOCX) from a URL.
-   - Inputs: url (string), filename (string - optional)
-   - Returns: absolute file path
-   - USE THIS when the user wants the ORIGINAL document sent to them.
-
-4. **PDF GENERATION** (generate_pdf_report_wrapped):
-   - Create professional PDF reports from markdown
-   - Inputs: markdown_content (string), filename (string)
-   - Returns absolute file path
-   - USE THIS when you are summarizing findings (e.g. "Create a report about...").
-
-6. **EMAIL** (gmail_send_email, gmail_create_draft, gmail_fetch_emails):
-   - Send emails with attachments
-   - Create drafts
-   - Fetch recent emails
-
-WORKFLOW EXAMPLES:
-
-Research & Report (Summary):
-1. search_google -> find relevant links
-2. visit_webpage -> read content from HTML/PDF/DOCX
-3. generate_pdf_report_wrapped -> create summary PDF
-4. gmail_send_email -> send summary
-
-Get Original Document:
-1. search_google -> find document link (PDF/DOCX)
-2. download_file -> save the file locally
-3. gmail_send_email -> send the downloaded file as attachment
-
-CRITICAL RULES:
-- **NEVER** batch "generate_pdf_report" and "gmail_send_email" in the same turn.
-- You MUST wait for 'generate_pdf_report_wrapped' to return the **Actual File Path** (it will look like `/Users/.../filename.pdf`).
-- ONLY THEN call 'gmail_send_email' using that exact path.
-- Do not guess the path.
-- If 'visit_webpage' fails (403/404), do NOT create an empty report. Try visiting another link.
-- To READ a PDF/DOCX content for a summary: use 'visit_webpage'.
-- To SEND the PDF/DOCX file itself: use 'download_file'.
-- For emails, always verify recipient_email has @
+RULES:
+- NO generic responses like "Please find the response below." Always be substantive.
+- NO HALLUCINATIONS: Only report success if the tools return success.
+- PDF FIRST: Always generate the PDF before calling the send tool if an attachment is promised.
 """
 
 
@@ -610,9 +607,32 @@ async def chat(user_message: str, groq_api_key: str, user_id: str, conversation_
     LangGraph-based Agent Chat (Blocking).
     """
     
+    # 0. Detect if this is a pure question/generation (no tool intent)
+    import re
+    tool_keywords = [
+        r"\b(pdf|lampiran|kirim|email|draft|generate|buat file|download|search|cari|extract|visit|web|ringkasan|summary|laporan|report|attach)\b"
+    ]
+    is_tool_intent = any(re.search(pattern, user_message, re.IGNORECASE) for pattern in tool_keywords)
+
+    if not is_tool_intent:
+        # Use Gemini directly for pure generation/QA
+        google_api_key = os.environ.get("GOOGLE_API_KEY")
+        if not google_api_key:
+            return {"type": "final_result", "message": "Error: GOOGLE_API_KEY not configured.", "intent": {"action": "direct_gemini", "query": user_message}}
+        llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.2, google_api_key=google_api_key)
+        formatted_history = convert_history(conversation_history)
+        messages = formatted_history + [HumanMessage(content=user_message)]
+        # Use only the last 5 messages for context
+        messages = messages[-5:]
+        response = await llm.ainvoke(messages)
+        return {
+            "type": "final_result",
+            "message": response.content,
+            "intent": {"action": "direct_gemini", "query": user_message}
+        }
+
     # 1. Setup Tools
     tools = get_agent_tools(user_id)
-    
     # 2. Setup Agent Factory
     def create_agent(llm, provider_name):
         return create_react_agent(
@@ -620,22 +640,17 @@ async def chat(user_message: str, groq_api_key: str, user_id: str, conversation_
             tools=tools,
             prompt=SYSTEM_PROMPT,
         )
-    
     # 3. Execute
     formatted_history = convert_history(conversation_history)
     inputs = {"messages": formatted_history + [HumanMessage(content=user_message)]}
-    
     try:
         state, provider_used = await run_agent_with_fallback(create_agent, inputs, groq_api_key)
-        
         last_message = state["messages"][-1]
         response_message = last_message.content
         if provider_used == "gemini":
             response_message = f"*[Using Gemini - Groq rate limited]*\n\n{response_message}"
-        
     except Exception as e:
         response_message = f"Error executing task: {str(e)}"
-        
     return {
         "type": "final_result",
         "message": response_message,
@@ -646,7 +661,7 @@ async def run_agent_stream_with_fallback(agent_factory, inputs: dict, groq_api_k
     google_api_key = os.environ.get("GOOGLE_API_KEY")
 
     async def iterate_events(agent, provider):
-        async for event in agent.astream_events(inputs, version="v1"):
+        async for event in agent.astream_events(inputs, version="v1", config={"recursion_limit": 15}):
             yield event, provider
 
     # Try Groq
@@ -658,9 +673,10 @@ async def run_agent_stream_with_fallback(agent_factory, inputs: dict, groq_api_k
                 yield event, prov
             return
         except Exception as e:
-             if "413" in str(e) or "rate_limit" in str(e).lower():
-                 print(f"Groq rate limit (stream), falling back to Gemini.")
-             else:
+            error_str = str(e).lower()
+            if any(err in error_str for err in ["413", "rate_limit", "tool_use_failed", "failed_generation", "failed to call", "adjust your prompt"]):
+                 print(f"Groq error (stream), falling back to Gemini.")
+            else:
                  raise e
     
     # Fallback Gemini
