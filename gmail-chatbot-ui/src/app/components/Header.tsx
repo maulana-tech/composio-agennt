@@ -42,6 +42,11 @@ export default function Header({
           <span className="text-white text-sm font-medium">U</span>
         </div>
       </div>
+      {/* Just Chat logo and text */}
+      <div className="flex items-center gap-1 ml-4">
+        <img src="/justchat-logo.svg" alt="Just Chat Logo" className="w-7 h-7" />
+        <span className="text-teal-300 text-xs font-bold tracking-wide">Just Chat</span>
+      </div>
     </header>
   );
 }
