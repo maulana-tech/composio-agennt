@@ -272,7 +272,13 @@ established early and tracked consistently throughout the implementation process
     # Save PDF
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"report_{topic.replace(' ', '_')[:30]}_{ts}.pdf"
-    output_path = os.path.abspath(filename)
+    
+    # Ensure attacchment directory exists
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    attachment_dir = os.path.join(base_dir, "attacchment")
+    os.makedirs(attachment_dir, exist_ok=True)
+    
+    output_path = os.path.join(attachment_dir, filename)
     pdf.output(output_path)
     
     return {
@@ -408,7 +414,12 @@ def generate_pdf_report(markdown_content: str, filename: str = "report.pdf", sen
         pdf.write_html(html_content)
 
         # 5. Save
-        output_path = os.path.abspath(filename)
+        # Ensure attacchment directory exists
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        attachment_dir = os.path.join(base_dir, "attacchment")
+        os.makedirs(attachment_dir, exist_ok=True)
+        
+        output_path = os.path.join(attachment_dir, filename)
         pdf.output(output_path)
         
         # Cleanup logo
