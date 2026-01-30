@@ -99,7 +99,10 @@ def get_darker_shade(rgb: Tuple[int, int, int], factor: float = 0.3) -> Tuple[in
     return tuple(max(0, int(c * (1 - factor))) for c in rgb)
 
 
-class StyledReportPDF(FPDF):
+from fpdf import FPDF
+from fpdf.html import HTMLMixin
+
+class StyledReportPDF(FPDF, HTMLMixin):
     def __init__(self, primary_color: Tuple[int, int, int], secondary_color: Tuple[int, int, int], 
                  accent_color: Tuple[int, int, int], logo_path: Optional[str] = None):
         super().__init__()
@@ -111,19 +114,20 @@ class StyledReportPDF(FPDF):
         
     def header(self):
         # Header background bar
-        self.set_fill_color(*self.primary_color)
+        self.set_fill_color(255, 255, 255) # White header
         self.rect(0, 0, 210, 25, 'F')
         
-        # Logo (top left)
+        # Logo (top right)
         if self.logo_path and os.path.exists(self.logo_path):
             try:
-                self.image(self.logo_path, 10, 5, 15)
+                # Place logo on the right (x=160, y=5, width=40)
+                self.image(self.logo_path, 160, 5, 40)
             except Exception:
                 pass
         
-        # Accent line
-        self.set_fill_color(*self.accent_color)
-        self.rect(0, 25, 210, 2, 'F')
+        # Accent line (keep blue)
+        self.set_fill_color(*self.primary_color)
+        self.rect(0, 25, 210, 1.5, 'F')
         
         self.ln(30)
         
@@ -136,13 +140,13 @@ class StyledReportPDF(FPDF):
         
         # Footer text
         self.set_y(-15)
-        self.set_font('helvetica', 'I', 8)
+        self.set_font('times', 'I', 8)
         self.set_text_color(*self.secondary_color)
         self.cell(0, 10, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Page {self.page_no()}', align='C')
         
     def add_title(self, title: str):
         self.title_text = title
-        self.set_font('helvetica', 'B', 24)
+        self.set_font('times', 'B', 24)
         self.set_text_color(*self.primary_color)
         self.cell(0, 15, title, ln=True, align='C')
         
@@ -155,7 +159,7 @@ class StyledReportPDF(FPDF):
     def add_section(self, title: str, content: str):
         # Section header with colored background
         self.set_fill_color(*get_lighter_shade(self.primary_color, 0.8))
-        self.set_font('helvetica', 'B', 14)
+        self.set_font('times', 'B', 14)
         self.set_text_color(*get_darker_shade(self.primary_color, 0.2))
         
         # Section box
@@ -169,15 +173,15 @@ class StyledReportPDF(FPDF):
         self.ln(3)
         
         # Content
-        self.set_font('helvetica', '', 11)
-        self.set_text_color(50, 50, 50)
+        self.set_font('times', '', 12)
+        self.set_text_color(0, 0, 0) # Pure black
         self.multi_cell(0, 6, content)
         self.ln(5)
         
     def add_bullet_points(self, title: str, points: List[str]):
         # Section header
         self.set_fill_color(*get_lighter_shade(self.secondary_color, 0.8))
-        self.set_font('helvetica', 'B', 12)
+        self.set_font('times', 'B', 12)
         self.set_text_color(*self.secondary_color)
         
         y_start = self.get_y()
@@ -190,8 +194,8 @@ class StyledReportPDF(FPDF):
         self.ln(2)
         
         # Bullet points
-        self.set_font('helvetica', '', 10)
-        self.set_text_color(60, 60, 60)
+        self.set_font('times', '', 12)
+        self.set_text_color(0, 0, 0)
         
         for point in points:
             # Colored bullet
@@ -280,13 +284,18 @@ established early and tracked consistently throughout the implementation process
 
 class ReportPDF(StyledReportPDF):
     def __init__(self):
-        # Default professional colors
+        # Colors matching the new logo
         colors = [
-            (41, 128, 185),   # Professional blue
-            (52, 73, 94),     # Dark slate
-            (22, 160, 133),   # Teal accent
+            (0, 156, 255),   # Bright Blue from logo
+            (34, 37, 44),    # Dark Slate from logo
+            (0, 156, 255),   # Accent Blue
         ]
         super().__init__(colors[0], colors[1], colors[2])
+        
+        # Default logo path
+        self.logo_path = os.path.join(os.path.dirname(__file__), 'assets/logo.png')
+        if not os.path.exists(self.logo_path):
+            self.logo_path = None
 
     def header(self):
         super().header()
@@ -295,53 +304,120 @@ class ReportPDF(StyledReportPDF):
         super().footer()
 
 
+def generate_logo_from_email(email: str) -> str:
+    """Generate a simple professional logo image from an email string."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # Extract name part from email
+        name = email.split('@')[0]
+        # Get up to 5 characters for the logo
+        logo_text = name[:5].lower()
+        
+        # Professional color palette
+        bg_colors = [(44, 62, 80), (52, 73, 94), (41, 128, 185), (22, 160, 133)]
+        bg_color = random.choice(bg_colors)
+        
+        # Create image
+        size = (200, 200)
+        img = Image.new('RGB', size, color=bg_color)
+        d = ImageDraw.Draw(img)
+        
+        # Draw a circle border
+        d.ellipse([10, 10, 190, 190], outline=(255, 255, 255), width=5)
+        
+        # Center text - use default font if special one not found
+        try:
+            # Try to find a font on the system
+            font_paths = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                "Arial.ttf"
+            ]
+            font = None
+            for fp in font_paths:
+                if os.path.exists(fp):
+                    font = ImageFont.truetype(fp, 60)
+                    break
+            if not font:
+                font = ImageFont.load_default()
+        except:
+            font = ImageFont.load_default()
+            
+        # Get text size to center it
+        bbox = d.textbbox((100, 100), logo_text, font=font, anchor="mm")
+        d.text((100, 100), logo_text, font=font, fill=(255, 255, 255), anchor="mm")
+        
+        logo_filename = f"logo_{name}_{random.getrandbits(16)}.png"
+        logo_path = os.path.abspath(logo_filename)
+        img.save(logo_path)
+        return logo_path
+    except Exception as e:
+        print(f"Logo generation error: {e}")
+        return ""
+
 @tool
-def generate_pdf_report(markdown_content: str, filename: str = "report.pdf") -> str:
+def generate_pdf_report(markdown_content: str, filename: str = "report.pdf", sender_email: str = "AI Assistant") -> str:
     """
     Generate a professional PDF report from Markdown content using FPDF.
     Supports HTML/CSS styling via Markdown to HTML conversion.
-    Useful for creating final reports after research.
-    IMPORTANT: This tool returns the ABSOLUTE PATH of the generated file which MUST be used for attachments.
+    
+    Args:
+        markdown_content: Content in markdown.
+        filename: Name of the file.
+        sender_email: Email to generate logo from.
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # If filename is generic or simple, add timestamp to avoid overwrites
     if filename == "report.pdf" or filename == "output.pdf":
         filename = f"report_{ts}.pdf"
     elif not filename.endswith('.pdf'):
         filename = f"{filename}.pdf"
-    
-    # Do NOT force timestamp on custom filenames, to allow agent to predict path.
         
+    logo_path = None
     try:
         # 1. Convert Markdown to HTML
-        # Using 'extra' extension for tables, 'nl2br' for newlines
-        html_content = markdown.markdown(
-            markdown_content, 
-            extensions=['extra', 'nl2br', 'sane_lists']
-        )
-        
-        # Add basic CSS styling for the PDF
-        # Note: FPDF2 write_html supports basic tags. 
-        # We wrap the content in a body/div to apply general styles if needed.
-        # But mostly we rely on the specific tag support.
-        
-        # 2. Setup PDF
+        try:
+            html_content = markdown.markdown(
+                markdown_content,
+                extensions=['extra', 'nl2br', 'sane_lists']
+            )
+        except Exception:
+            try:
+                html_content = markdown.markdown(markdown_content, extensions=['extra'])
+            except Exception:
+                html_content = markdown.markdown(markdown_content)
+
+        # 2. Setup PDF with specified logo
         pdf = ReportPDF()
+        
+        # If no specific logo exists in assets, use dynamic generation
+        if not pdf.logo_path:
+            logo_path = generate_logo_from_email(sender_email)
+            pdf.logo_path = logo_path if logo_path and os.path.exists(logo_path) else None
+        else:
+            logo_path = None # Using static logo
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
-        
-        # FPDF2 handles fonts fairly well, but for standard usage:
-        pdf.set_font("helvetica", size=12)
-        
-        # 3. Write HTML
-        # We can prepend a title or some custom HTML wrapper if we want more control
-        # but the markdown content is usually self-contained.
+
+        # 3. Setup Layout
+        pdf.ln(5)
+
+        # 4. Write HTML
+        pdf.set_font("times", size=12)
+        pdf.set_text_color(0, 0, 0)
         pdf.write_html(html_content)
-        
-        # 4. Save
+
+        # 5. Save
         output_path = os.path.abspath(filename)
         pdf.output(output_path)
-        return output_path
         
+        # Cleanup logo
+        if logo_path and os.path.exists(logo_path):
+            os.remove(logo_path)
+            
+        return output_path
+
     except Exception as e:
+        if logo_path and os.path.exists(logo_path):
+            os.remove(logo_path)
         return f"ERROR: {str(e)}"
