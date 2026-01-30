@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { useChat } from "./hooks";
 import {
   Sidebar,
@@ -11,10 +11,13 @@ import {
   ChatInput,
   Header,
 } from "./components";
+import PDFExportButton from "./components/PDFExportButton";
 
 export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   
   const {
     messages,
@@ -43,13 +46,22 @@ export default function Home() {
     fetchSessions();
   }, [fetchSessions]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  // Check if user is near bottom of chat container
+  const handleScroll = useCallback(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+    setShouldAutoScroll(isNearBottom);
+  }, []);
 
+  // Auto-scroll only if user is at bottom (for regular chat view)
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [agentLogs]);
+    if (shouldAutoScroll && !isAgentWorking) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, shouldAutoScroll, isAgentWorking]);
 
   const handleExitAgentView = () => {
     setIsAgentWorking(false);
@@ -114,13 +126,23 @@ export default function Home() {
             />
           ) : (
             <div className="h-full flex flex-col relative">
-              <div className="flex-1 overflow-y-auto py-6 px-4">
+              <div 
+                ref={chatContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto py-6 px-4"
+              >
                 <div className="max-w-4xl mx-auto h-full">
                   <ChatMessages
                     messages={messages}
                     isLoading={isLoading}
                     messagesEndRef={messagesEndRef}
                   />
+                  {/* PDF Export Button for last assistant message */}
+                  {messages.length > 0 && messages[messages.length-1].role === "assistant" && messages[messages.length-1].content && (
+                    <div className="mt-4 flex justify-end">
+                      <PDFExportButton markdown={messages[messages.length-1].content} />
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="bg-[#0a0f1a] py-4 border-t border-gray-800/30 px-4">
