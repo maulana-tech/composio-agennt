@@ -1,6 +1,6 @@
 "use client";
 
-import { RefObject } from "react";
+import { RefObject, useRef, useState, useCallback, useEffect } from "react";
 import { AgentLog, FilePreview, Message } from "../types";
 import { SearchIcon, FileIcon, CheckIcon, AlertIcon, RefreshIcon, ExpandIcon, DownloadIcon, XIcon, ExtractIcon, GlobeIcon, MapIcon, MailIcon } from "./icons";
 import { getLogTypeColor } from "../utils/constants";
@@ -46,6 +46,37 @@ export default function AgentPanelLayout({
   messagesEndRef,
   logsEndRef,
 }: AgentPanelLayoutProps) {
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScrollChat, setShouldAutoScrollChat] = useState(true);
+  const [shouldAutoScrollLogs, setShouldAutoScrollLogs] = useState(true);
+
+  const handleChatScroll = useCallback(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    setShouldAutoScrollChat(scrollHeight - scrollTop - clientHeight < 100);
+  }, []);
+
+  const handleLogsScroll = useCallback(() => {
+    const container = logsContainerRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    setShouldAutoScrollLogs(scrollHeight - scrollTop - clientHeight < 100);
+  }, []);
+
+  useEffect(() => {
+    if (shouldAutoScrollChat) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, shouldAutoScrollChat, messagesEndRef]);
+
+  useEffect(() => {
+    if (shouldAutoScrollLogs) {
+      logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [agentLogs, shouldAutoScrollLogs, logsEndRef]);
+
   return (
     <div className="flex-1 flex relative z-10">
       {/* Left Panel - Agent Logs */}
@@ -59,7 +90,11 @@ export default function AgentPanelLayout({
             Clear
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div 
+          ref={logsContainerRef}
+          onScroll={handleLogsScroll}
+          className="flex-1 overflow-y-auto p-3 space-y-2"
+        >
           {agentLogs.length === 0 ? (
             <div className="text-center py-8">
               <div className="w-12 h-12 rounded-full bg-gray-800/50 flex items-center justify-center mx-auto mb-3 text-gray-500">
@@ -99,7 +134,11 @@ export default function AgentPanelLayout({
         <div className="px-4 py-3 border-b border-gray-800/50">
           <h3 className="text-sm font-medium text-gray-300">Conversation</h3>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div 
+          ref={chatContainerRef}
+          onScroll={handleChatScroll}
+          className="flex-1 overflow-y-auto p-4 space-y-3"
+        >
           <ChatMessages messages={messages} isLoading={isLoading} messagesEndRef={messagesEndRef} compact />
         </div>
         <div className="p-3 border-t border-gray-800/50">
