@@ -19,3 +19,4 @@ pydantic
 fpdf2
 markdown[extra]
 pillow
+python-multipart
