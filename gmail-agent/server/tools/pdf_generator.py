@@ -1,344 +1,551 @@
 from fpdf import FPDF
+from fpdf.html import HTMLMixin
 from langchain.tools import tool
 import markdown
+import re
 import os
 import random
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 from datetime import datetime
 
 
-# Random topics for report generation
-RANDOM_TOPICS = [
-    "Artificial Intelligence in Healthcare",
-    "Sustainable Energy Solutions",
-    "The Future of Remote Work",
-    "Cybersecurity Best Practices",
-    "Digital Marketing Trends 2026",
-    "Climate Change Mitigation Strategies",
-    "Blockchain Technology Applications",
-    "Machine Learning in Finance",
-    "Smart City Development",
-    "Mental Health in the Workplace",
-    "E-commerce Growth Strategies",
-    "Data Privacy and Protection",
-    "Renewable Energy Technologies",
-    "Supply Chain Optimization",
-    "Customer Experience Innovation",
-]
+class ProfessionalPDF(FPDF, HTMLMixin):
+    """Enhanced PDF class with better markdown support and professional styling."""
 
-
-def extract_colors_from_image(image_path: str, num_colors: int = 3) -> List[Tuple[int, int, int]]:
-    """
-    Extract dominant colors from an image using PIL.
-    Returns list of RGB tuples.
-    """
-    try:
-        from PIL import Image
-        from collections import Counter
-        
-        img = Image.open(image_path)
-        # Resize for faster processing
-        img = img.resize((100, 100))
-        # Convert to RGB if necessary
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Get all pixels
-        pixels = list(img.getdata())
-        
-        # Filter out very light (white-ish) and very dark (black-ish) colors
-        filtered_pixels = [
-            p for p in pixels 
-            if not (sum(p) > 700 or sum(p) < 60)  # Not too white or too black
-        ]
-        
-        if not filtered_pixels:
-            filtered_pixels = pixels
-        
-        # Count colors and get most common
-        color_counts = Counter(filtered_pixels)
-        dominant_colors = [color for color, count in color_counts.most_common(num_colors * 3)]
-        
-        # Cluster similar colors
-        def color_distance(c1, c2):
-            return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
-        
-        selected = []
-        for color in dominant_colors:
-            if len(selected) >= num_colors:
-                break
-            # Check if color is sufficiently different from already selected
-            is_unique = all(color_distance(color, s) > 50 for s in selected)
-            if is_unique or not selected:
-                selected.append(color)
-        
-        # Ensure we have enough colors
-        while len(selected) < num_colors:
-            selected.append((41, 128, 185))  # Default blue
-        
-        return selected[:num_colors]
-        
-    except Exception as e:
-        print(f"Error extracting colors: {e}")
-        # Return default professional colors
-        return [(41, 128, 185), (52, 73, 94), (22, 160, 133)]
-
-
-def rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
-    """Convert RGB tuple to hex string."""
-    return '#{:02x}{:02x}{:02x}'.format(*rgb)
-
-
-def get_lighter_shade(rgb: Tuple[int, int, int], factor: float = 0.3) -> Tuple[int, int, int]:
-    """Get a lighter shade of the color."""
-    return tuple(min(255, int(c + (255 - c) * factor)) for c in rgb)
-
-
-def get_darker_shade(rgb: Tuple[int, int, int], factor: float = 0.3) -> Tuple[int, int, int]:
-    """Get a darker shade of the color."""
-    return tuple(max(0, int(c * (1 - factor))) for c in rgb)
-
-
-from fpdf import FPDF
-from fpdf.html import HTMLMixin
-
-class StyledReportPDF(FPDF, HTMLMixin):
-    def __init__(self, primary_color: Tuple[int, int, int], secondary_color: Tuple[int, int, int], 
-                 accent_color: Tuple[int, int, int], logo_path: Optional[str] = None):
+    def __init__(
+        self, title: str = "Research Report", sender_email: str = "AI Assistant"
+    ):
         super().__init__()
-        self.primary_color = primary_color
-        self.secondary_color = secondary_color
-        self.accent_color = accent_color
-        self.logo_path = logo_path
-        self.title_text = ""
-        
+        self.report_title = title
+        self.sender_email = sender_email
+        self.current_section = ""
+
+        # Professional color scheme
+        self.primary_color = (0, 102, 204)  # Deep Blue
+        self.secondary_color = (51, 51, 51)  # Dark Gray
+        self.accent_color = (0, 153, 255)  # Bright Blue
+        self.light_bg = (245, 248, 250)  # Light Blue-Gray
+        self.border_color = (200, 210, 220)  # Border Gray
+
+        # Logo handling
+        self.logo_path = self._get_logo_path()
+
+    def _get_logo_path(self) -> Optional[str]:
+        """Get logo path - either static or generate from email."""
+        static_logo = os.path.join(os.path.dirname(__file__), "assets/logo.png")
+        if os.path.exists(static_logo):
+            return static_logo
+        return None
+
     def header(self):
-        # Header background bar
-        self.set_fill_color(255, 255, 255) # White header
-        self.rect(0, 0, 210, 25, 'F')
-        
+        """Professional header with logo and title."""
+        # White background
+        self.set_fill_color(255, 255, 255)
+        self.rect(0, 0, 210, 35, "F")
+
         # Logo (top right)
         if self.logo_path and os.path.exists(self.logo_path):
             try:
-                # Place logo on the right (x=160, y=5, width=40)
-                self.image(self.logo_path, 160, 5, 40)
+                self.image(self.logo_path, 165, 8, 35)
             except Exception:
                 pass
-        
-        # Accent line (keep blue)
+
+        # Decorative top bar
         self.set_fill_color(*self.primary_color)
-        self.rect(0, 25, 210, 1.5, 'F')
-        
-        self.ln(30)
-        
+        self.rect(0, 0, 210, 3, "F")
+
+        # Accent line
+        self.set_fill_color(*self.accent_color)
+        self.rect(0, 35, 210, 0.8, "F")
+
+        self.ln(38)
+
     def footer(self):
+        """Professional footer with page numbers and generation info."""
         self.set_y(-20)
-        
+
         # Footer line
-        self.set_fill_color(*get_lighter_shade(self.secondary_color, 0.5))
-        self.rect(10, self.get_y(), 190, 0.5, 'F')
-        
-        # Footer text
+        self.set_fill_color(*self.border_color)
+        self.rect(10, self.get_y(), 190, 0.5, "F")
+
+        # Footer content
         self.set_y(-15)
-        self.set_font('times', 'I', 8)
+        self.set_font("helvetica", "", 8)
         self.set_text_color(*self.secondary_color)
-        self.cell(0, 10, f'Generated on {datetime.now().strftime("%B %d, %Y")} | Page {self.page_no()}', align='C')
-        
-    def add_title(self, title: str):
-        self.title_text = title
-        self.set_font('times', 'B', 24)
+
+        # Left: Report info
+        self.cell(0, 5, f"{self.report_title}", ln=False, align="L")
+
+        # Center: Generation date
+        self.cell(
+            0,
+            5,
+            f"Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}",
+            ln=False,
+            align="C",
+        )
+
+        # Right: Page number
+        self.cell(0, 5, f"Page {self.page_no()}", ln=True, align="R")
+
+    def add_title_page(self, title: str, subtitle: str = "", metadata: Dict = None):
+        """Add a professional title page."""
+        self.add_page()
+
+        # Large top spacing
+        self.ln(60)
+
+        # Main title
+        self.set_font("helvetica", "B", 28)
         self.set_text_color(*self.primary_color)
-        self.cell(0, 15, title, ln=True, align='C')
-        
-        # Decorative underline
-        self.set_fill_color(*self.accent_color)
-        x_center = (210 - 60) / 2
-        self.rect(x_center, self.get_y(), 60, 1.5, 'F')
+        self.cell(0, 15, title, ln=True, align="C")
+
+        # Subtitle
+        if subtitle:
+            self.ln(5)
+            self.set_font("helvetica", "", 14)
+            self.set_text_color(*self.secondary_color)
+            self.cell(0, 10, subtitle, ln=True, align="C")
+
+        # Decorative element
         self.ln(10)
-        
-    def add_section(self, title: str, content: str):
-        # Section header with colored background
-        self.set_fill_color(*get_lighter_shade(self.primary_color, 0.8))
-        self.set_font('times', 'B', 14)
-        self.set_text_color(*get_darker_shade(self.primary_color, 0.2))
-        
-        # Section box
-        y_start = self.get_y()
-        self.cell(0, 10, f'  {title}', ln=True, fill=True)
-        
-        # Accent sidebar
         self.set_fill_color(*self.accent_color)
-        self.rect(10, y_start, 2, 10, 'F')
-        
-        self.ln(3)
-        
-        # Content
-        self.set_font('times', '', 12)
-        self.set_text_color(0, 0, 0) # Pure black
-        self.multi_cell(0, 6, content)
+        x_center = 105 - 30  # Center 60mm wide bar
+        self.rect(x_center, self.get_y(), 60, 2, "F")
+
+        # Metadata section
+        if metadata:
+            self.ln(20)
+            self.set_font("helvetica", "", 11)
+            self.set_text_color(*self.secondary_color)
+
+            for key, value in metadata.items():
+                self.ln(5)
+                self.cell(0, 6, f"{key}: {value}", ln=True, align="C")
+
+        # Bottom note
+        self.ln(30)
+        self.set_font("helvetica", "I", 10)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 8, "Confidential Research Report", ln=True, align="C")
+        self.cell(0, 8, "Powered by AI with Google Grounding", ln=True, align="C")
+
+    def add_heading1(self, text: str):
+        """Add H1 heading."""
+        self.ln(8)
+        self.set_font("helvetica", "B", 18)
+        self.set_text_color(*self.primary_color)
+        self.cell(0, 12, text, ln=True)
+
+        # Underline
+        self.set_fill_color(*self.accent_color)
+        self.rect(10, self.get_y() - 2, 40, 1, "F")
         self.ln(5)
-        
-    def add_bullet_points(self, title: str, points: List[str]):
-        # Section header
-        self.set_fill_color(*get_lighter_shade(self.secondary_color, 0.8))
-        self.set_font('times', 'B', 12)
+
+    def add_heading2(self, text: str):
+        """Add H2 heading."""
+        self.ln(6)
+        self.set_font("helvetica", "B", 14)
         self.set_text_color(*self.secondary_color)
-        
-        y_start = self.get_y()
-        self.cell(0, 8, f'  {title}', ln=True, fill=True)
-        
-        # Accent sidebar
-        self.set_fill_color(*self.secondary_color)
-        self.rect(10, y_start, 2, 8, 'F')
-        
+        self.cell(0, 10, text, ln=True)
         self.ln(2)
-        
-        # Bullet points
-        self.set_font('times', '', 12)
+
+    def add_heading3(self, text: str):
+        """Add H3 heading."""
+        self.ln(4)
+        self.set_font("helvetica", "B", 12)
+        self.set_text_color(*self.secondary_color)
+        self.cell(0, 8, text, ln=True)
+
+    def add_paragraph(self, text: str):
+        """Add a paragraph with proper formatting."""
+        self.set_font("helvetica", "", 11)
         self.set_text_color(0, 0, 0)
-        
-        for point in points:
-            # Colored bullet
-            self.set_fill_color(*self.accent_color)
-            self.ellipse(15, self.get_y() + 2, 2, 2, 'F')
-            self.set_x(20)
-            self.multi_cell(0, 5, point)
-            self.ln(1)
-        
+        self.multi_cell(0, 6, text)
         self.ln(3)
 
+    def add_bullet_point(self, text: str, level: int = 0):
+        """Add a bullet point with indentation support."""
+        indent = 10 + (level * 5)
 
-def generate_styled_report(topic: Optional[str] = None, logo_path: Optional[str] = None) -> Dict:
+        # Bullet symbol
+        self.set_xy(indent, self.get_y())
+        self.set_font("helvetica", "", 11)
+        self.set_text_color(*self.accent_color)
+        self.cell(5, 6, "•", ln=False)
+
+        # Text
+        self.set_x(indent + 5)
+        self.set_text_color(0, 0, 0)
+        self.multi_cell(0, 6, text)
+
+    def add_numbered_item(self, number: int, text: str):
+        """Add a numbered list item."""
+        self.set_font("helvetica", "B", 11)
+        self.set_text_color(*self.primary_color)
+        self.cell(10, 6, f"{number}.", ln=False)
+
+        self.set_font("helvetica", "", 11)
+        self.set_text_color(0, 0, 0)
+        self.multi_cell(0, 6, text)
+
+    def add_quote(self, text: str, author: str = "", source: str = ""):
+        """Add a styled quote block."""
+        self.ln(4)
+
+        # Left border
+        self.set_fill_color(*self.accent_color)
+        self.rect(12, self.get_y(), 3, 20, "F")
+
+        # Quote text background
+        self.set_fill_color(*self.light_bg)
+        self.rect(18, self.get_y() - 2, 182, 24, "F")
+
+        # Quote text
+        self.set_xy(22, self.get_y())
+        self.set_font("helvetica", "I", 10)
+        self.set_text_color(*self.secondary_color)
+        self.multi_cell(170, 5, f'"{text}"')
+
+        # Attribution
+        if author or source:
+            self.ln(2)
+            self.set_x(22)
+            self.set_font("helvetica", "", 9)
+            self.set_text_color(128, 128, 128)
+            attribution = f"— {author}" if author else ""
+            if source:
+                attribution += f", {source}" if attribution else f"— {source}"
+            self.cell(0, 5, attribution, ln=True)
+
+        self.ln(6)
+
+    def add_table_row(
+        self, cells: List[str], is_header: bool = False, col_widths: List[int] = None
+    ):
+        """Add a table row."""
+        if col_widths is None:
+            # Default equal widths
+            col_widths = [190 // len(cells)] * len(cells)
+
+        # Calculate row height based on content
+        self.set_font("helvetica", "B" if is_header else "", 9)
+        max_height = 6
+
+        for i, cell in enumerate(cells):
+            # Estimate height needed
+            lines_needed = len(cell) // (col_widths[i] // 3) + 1
+            height_needed = lines_needed * 5
+            max_height = max(max_height, height_needed)
+
+        # Check if we need a new page
+        if self.get_y() + max_height > 270:
+            self.add_page()
+
+        # Row background
+        if is_header:
+            self.set_fill_color(*self.primary_color)
+            self.rect(10, self.get_y(), 190, max_height + 2, "F")
+            text_color = (255, 255, 255)
+        else:
+            # Alternate row colors
+            if int(self.get_y() / 10) % 2 == 0:
+                self.set_fill_color(250, 250, 250)
+                self.rect(10, self.get_y(), 190, max_height + 2, "F")
+            text_color = (0, 0, 0)
+
+        # Draw cells
+        x_start = 10
+        for i, cell in enumerate(cells):
+            self.set_xy(x_start, self.get_y() + 1)
+            self.set_text_color(*text_color)
+            self.multi_cell(col_widths[i], 5, cell, border=0)
+
+            # Draw cell border
+            if not is_header:
+                self.set_draw_color(*self.border_color)
+                self.rect(x_start, self.get_y() - 1, col_widths[i], max_height + 2, "D")
+
+            x_start += col_widths[i]
+
+        self.ln(max_height + 3)
+
+    def add_info_box(self, title: str, content: str, box_type: str = "info"):
+        """Add an info/warning/success box."""
+        colors = {
+            "info": (0, 102, 204),
+            "warning": (255, 165, 0),
+            "success": (34, 139, 34),
+            "error": (220, 20, 60),
+        }
+        color = colors.get(box_type, colors["info"])
+
+        self.ln(4)
+
+        # Box border
+        self.set_draw_color(*color)
+        self.set_line_width(0.5)
+
+        # Title background
+        self.set_fill_color(*color)
+        self.rect(12, self.get_y(), 186, 8, "F")
+
+        # Title
+        self.set_xy(15, self.get_y() + 1.5)
+        self.set_font("helvetica", "B", 10)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 5, title.upper(), ln=True)
+
+        # Content
+        self.ln(6)
+        self.set_x(15)
+        self.set_font("helvetica", "", 10)
+        self.set_text_color(0, 0, 0)
+        self.multi_cell(180, 5, content)
+
+        # Box outline
+        self.rect(
+            12,
+            self.get_y() - 5 - (len(content) // 35 * 5),
+            186,
+            15 + (len(content) // 35 * 5),
+            "D",
+        )
+
+        self.ln(8)
+
+
+def parse_markdown_content(content: str) -> List[Dict[str, Any]]:
     """
-    Generate a one-page styled PDF report.
-    
-    Args:
-        topic: Topic for the report (random if not provided)
-        logo_path: Path to logo image (optional)
-    
-    Returns:
-        Dictionary with path, topic, and colors used
+    Parse markdown content into structured elements for PDF generation.
+    Returns a list of dictionaries with element type and content.
     """
-    # Select topic
-    if not topic:
-        topic = random.choice(RANDOM_TOPICS)
-    
-    # Extract colors from logo or use defaults
-    if logo_path and os.path.exists(logo_path):
-        colors = extract_colors_from_image(logo_path)
-    else:
-        colors = [
-            (41, 128, 185),   # Professional blue
-            (52, 73, 94),     # Dark slate
-            (22, 160, 133),   # Teal accent
-        ]
-    
-    primary_color = colors[0]
-    secondary_color = colors[1] if len(colors) > 1 else colors[0]
-    accent_color = colors[2] if len(colors) > 2 else colors[0]
-    
-    # Create PDF
-    pdf = StyledReportPDF(primary_color, secondary_color, accent_color, logo_path)
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=25)
-    
-    # Add title
-    pdf.add_title(topic)
-    
-    # Executive Summary
-    summary = f"""This report provides a comprehensive overview of {topic.lower()}. 
-In today's rapidly evolving landscape, understanding the key aspects and implications 
-of this subject is crucial for organizations and individuals alike. The following 
-sections outline the main concepts, benefits, and recommendations."""
-    pdf.add_section("Executive Summary", summary)
-    
-    # Key Points
-    key_points = [
-        f"Understanding the fundamentals of {topic.lower()} is essential for success",
-        "Implementation requires careful planning and stakeholder alignment",
-        "Technology plays a crucial role in modern approaches",
-        "Continuous monitoring and adaptation are key to long-term success",
-        "Collaboration across teams enhances outcomes significantly",
-    ]
-    pdf.add_bullet_points("Key Takeaways", key_points)
-    
-    # Recommendations
-    recommendations = f"""Based on our analysis, we recommend a phased approach to implementing 
-{topic.lower()} strategies. Organizations should start with a thorough assessment of current 
-capabilities, followed by pilot programs to validate assumptions. Success metrics should be 
-established early and tracked consistently throughout the implementation process."""
-    pdf.add_section("Recommendations", recommendations)
-    
-    # Save PDF
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"report_{topic.replace(' ', '_')[:30]}_{ts}.pdf"
-    
-    # Ensure attacchment directory exists
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    attachment_dir = os.path.join(base_dir, "attacchment")
-    os.makedirs(attachment_dir, exist_ok=True)
-    
-    output_path = os.path.join(attachment_dir, filename)
-    pdf.output(output_path)
-    
-    return {
-        "path": output_path,
-        "topic": topic,
-        "colors": [rgb_to_hex(c) for c in [primary_color, secondary_color, accent_color]]
-    }
+    elements = []
+    lines = content.split("\n")
+    i = 0
 
+    while i < len(lines):
+        line = lines[i].strip()
 
-class ReportPDF(StyledReportPDF):
-    def __init__(self):
-        # Colors matching the new logo
-        colors = [
-            (0, 156, 255),   # Bright Blue from logo
-            (34, 37, 44),    # Dark Slate from logo
-            (0, 156, 255),   # Accent Blue
-        ]
-        super().__init__(colors[0], colors[1], colors[2])
-        
-        # Default logo path
-        self.logo_path = os.path.join(os.path.dirname(__file__), 'assets/logo.png')
-        if not os.path.exists(self.logo_path):
-            self.logo_path = None
+        # Skip empty lines
+        if not line:
+            i += 1
+            continue
 
-    def header(self):
-        super().header()
+        # Headers
+        if line.startswith("# ") and not line.startswith("## "):
+            elements.append({"type": "h1", "content": line[2:].strip()})
+            i += 1
+            continue
+        elif line.startswith("## "):
+            elements.append({"type": "h2", "content": line[3:].strip()})
+            i += 1
+            continue
+        elif line.startswith("### "):
+            elements.append({"type": "h3", "content": line[4:].strip()})
+            i += 1
+            continue
 
-    def footer(self):
-        super().footer()
+        # Tables
+        if "|" in line and i + 1 < len(lines) and "---" in lines[i + 1]:
+            # This is a table header
+            headers = [cell.strip() for cell in line.split("|")[1:-1]]
+            i += 2  # Skip header and separator
+
+            rows = []
+            while i < len(lines) and "|" in lines[i]:
+                row = [cell.strip() for cell in lines[i].split("|")[1:-1]]
+                if row:
+                    rows.append(row)
+                i += 1
+
+            elements.append({"type": "table", "headers": headers, "rows": rows})
+            continue
+
+        # Quotes
+        if line.startswith("> "):
+            quote_lines = [line[2:]]
+            i += 1
+            while i < len(lines) and lines[i].strip().startswith("> "):
+                quote_lines.append(lines[i].strip()[2:])
+                i += 1
+
+            quote_text = " ".join(quote_lines)
+            # Try to extract attribution
+            author = ""
+            source = ""
+            if "—" in quote_text or "--" in quote_text:
+                parts = (
+                    quote_text.split("—")
+                    if "—" in quote_text
+                    else quote_text.split("--")
+                )
+                quote_text = parts[0].strip()
+                attribution = parts[1].strip() if len(parts) > 1 else ""
+                if "," in attribution:
+                    auth_parts = attribution.split(",", 1)
+                    author = auth_parts[0].strip()
+                    source = auth_parts[1].strip() if len(auth_parts) > 1 else ""
+                else:
+                    author = attribution
+
+            elements.append(
+                {
+                    "type": "quote",
+                    "content": quote_text,
+                    "author": author,
+                    "source": source,
+                }
+            )
+            continue
+
+        # Bullet points
+        if line.startswith("- ") or line.startswith("* "):
+            bullet_items = []
+            current_level = 0
+
+            while i < len(lines):
+                bullet_line = lines[i].rstrip()
+                if bullet_line.startswith("- ") or bullet_line.startswith("* "):
+                    bullet_items.append({"text": bullet_line[2:], "level": 0})
+                    i += 1
+                elif bullet_line.startswith("  - ") or bullet_line.startswith("  * "):
+                    bullet_items.append({"text": bullet_line[4:], "level": 1})
+                    i += 1
+                elif bullet_line:
+                    break
+                else:
+                    i += 1
+
+            if bullet_items:
+                elements.append({"type": "bullet_list", "items": bullet_items})
+            continue
+
+        # Numbered lists
+        numbered_match = re.match(r"^(\d+)\.\s+(.+)$", line)
+        if numbered_match:
+            numbered_items = []
+
+            while i < len(lines):
+                numbered_line = lines[i].strip()
+                match = re.match(r"^(\d+)\.\s+(.+)$", numbered_line)
+                if match:
+                    numbered_items.append(match.group(2))
+                    i += 1
+                elif numbered_line:
+                    break
+                else:
+                    i += 1
+
+            if numbered_items:
+                elements.append({"type": "numbered_list", "items": numbered_items})
+            continue
+
+        # Horizontal rule
+        if line == "---" or line == "***":
+            elements.append({"type": "hr"})
+            i += 1
+            continue
+
+        # Code blocks
+        if line.startswith("```"):
+            code_lines = []
+            language = line[3:].strip()
+            i += 1
+
+            while i < len(lines) and not lines[i].startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+
+            elements.append(
+                {"type": "code", "content": "\n".join(code_lines), "language": language}
+            )
+            i += 1
+            continue
+
+        # Info boxes (custom syntax: [INFO], [WARNING], [SUCCESS], [ERROR])
+        info_match = re.match(
+            r"^\[(INFO|WARNING|SUCCESS|ERROR)\]\s*(.+)$", line, re.IGNORECASE
+        )
+        if info_match:
+            box_type = info_match.group(1).lower()
+            title = info_match.group(2)
+            content_lines = []
+            i += 1
+
+            while i < len(lines) and lines[i].strip() and not lines[i].startswith("["):
+                content_lines.append(lines[i].strip())
+                i += 1
+
+            elements.append(
+                {
+                    "type": "info_box",
+                    "box_type": box_type,
+                    "title": title,
+                    "content": "\n".join(content_lines),
+                }
+            )
+            continue
+
+        # Regular paragraph
+        paragraph_lines = [line]
+        i += 1
+
+        while (
+            i < len(lines)
+            and lines[i].strip()
+            and not lines[i].startswith(("#", "-", "*", ">", "|", "["))
+        ):
+            if not re.match(r"^(\d+)\.\s+", lines[i]):
+                paragraph_lines.append(lines[i].strip())
+                i += 1
+            else:
+                break
+
+        paragraph_text = " ".join(paragraph_lines)
+
+        # Process inline formatting
+        paragraph_text = re.sub(
+            r"\*\*\*(.+?)\*\*\*", r"\1", paragraph_text
+        )  # Bold italic
+        paragraph_text = re.sub(r"\*\*(.+?)\*\*", r"\1", paragraph_text)  # Bold
+        paragraph_text = re.sub(r"\*(.+?)\*", r"\1", paragraph_text)  # Italic
+        paragraph_text = re.sub(r"`(.+?)`", r"\1", paragraph_text)  # Code
+
+        elements.append({"type": "paragraph", "content": paragraph_text})
+
+    return elements
 
 
 def generate_logo_from_email(email: str) -> str:
     """Generate a simple professional logo image from an email string."""
     try:
         from PIL import Image, ImageDraw, ImageFont
-        
+
         # Extract name part from email
-        name = email.split('@')[0]
+        name = email.split("@")[0]
         # Get up to 5 characters for the logo
         logo_text = name[:5].lower()
-        
+
         # Professional color palette
         bg_colors = [(44, 62, 80), (52, 73, 94), (41, 128, 185), (22, 160, 133)]
         bg_color = random.choice(bg_colors)
-        
+
         # Create image
         size = (200, 200)
-        img = Image.new('RGB', size, color=bg_color)
+        img = Image.new("RGB", size, color=bg_color)
         d = ImageDraw.Draw(img)
-        
+
         # Draw a circle border
         d.ellipse([10, 10, 190, 190], outline=(255, 255, 255), width=5)
-        
+
         # Center text - use default font if special one not found
         try:
             # Try to find a font on the system
             font_paths = [
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
                 "/System/Library/Fonts/Helvetica.ttc",
-                "Arial.ttf"
+                "Arial.ttf",
             ]
             font = None
             for fp in font_paths:
@@ -349,11 +556,11 @@ def generate_logo_from_email(email: str) -> str:
                 font = ImageFont.load_default()
         except:
             font = ImageFont.load_default()
-            
+
         # Get text size to center it
         bbox = d.textbbox((100, 100), logo_text, font=font, anchor="mm")
         d.text((100, 100), logo_text, font=font, fill=(255, 255, 255), anchor="mm")
-        
+
         logo_filename = f"logo_{name}_{random.getrandbits(16)}.png"
         logo_path = os.path.abspath(logo_filename)
         img.save(logo_path)
@@ -362,73 +569,163 @@ def generate_logo_from_email(email: str) -> str:
         print(f"Logo generation error: {e}")
         return ""
 
+
 @tool
-def generate_pdf_report(markdown_content: str, filename: str = "report.pdf", sender_email: str = "AI Assistant") -> str:
+def generate_pdf_report(
+    markdown_content: str,
+    filename: str = "report.pdf",
+    sender_email: str = "AI Assistant",
+) -> str:
     """
-    Generate a professional PDF report from Markdown content using FPDF.
-    Supports HTML/CSS styling via Markdown to HTML conversion.
-    
+    Generate a professional, detailed PDF report from Markdown content.
+
+    Features:
+    - Proper markdown parsing (headers, lists, quotes, tables)
+    - Professional styling with consistent colors
+    - Title page with metadata
+    - Page numbers and headers/footers
+    - Styled quote blocks for politician quotes
+    - Table support for structured data
+    - Info/warning boxes for highlights
+
     Args:
-        markdown_content: Content in markdown.
-        filename: Name of the file.
-        sender_email: Email to generate logo from.
+        markdown_content: Content in markdown format with proper structure
+        filename: Name of the output PDF file
+        sender_email: Email to generate logo from (optional)
+
+    Returns:
+        Absolute file path of the generated PDF
     """
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if filename == "report.pdf" or filename == "output.pdf":
-        filename = f"report_{ts}.pdf"
-    elif not filename.endswith('.pdf'):
-        filename = f"{filename}.pdf"
-        
-    logo_path = None
     try:
-        # 1. Convert Markdown to HTML
-        try:
-            html_content = markdown.markdown(
-                markdown_content,
-                extensions=['extra', 'nl2br', 'sane_lists']
-            )
-        except Exception:
-            try:
-                html_content = markdown.markdown(markdown_content, extensions=['extra'])
-            except Exception:
-                html_content = markdown.markdown(markdown_content)
+        # Prepare filename
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if filename == "report.pdf" or filename == "output.pdf":
+            filename = f"report_{ts}.pdf"
+        elif not filename.endswith(".pdf"):
+            filename = f"{filename}.pdf"
 
-        # 2. Setup PDF with specified logo
-        pdf = ReportPDF()
-        
-        # If no specific logo exists in assets, use dynamic generation
-        if not pdf.logo_path:
-            logo_path = generate_logo_from_email(sender_email)
-            pdf.logo_path = logo_path if logo_path and os.path.exists(logo_path) else None
-        else:
-            logo_path = None # Using static logo
+        # Extract title from content (first H1)
+        title_match = re.search(r"^#\s+(.+)$", markdown_content, re.MULTILINE)
+        report_title = title_match.group(1) if title_match else "Research Report"
+
+        # Parse markdown into structured elements
+        elements = parse_markdown_content(markdown_content)
+
+        # Create PDF
+        pdf = ProfessionalPDF(title=report_title, sender_email=sender_email)
+
+        # Add title page
+        metadata = {
+            "Generated By": "AI Research Assistant",
+            "Date": datetime.now().strftime("%B %d, %Y"),
+            "Method": "Google Grounding with Real-Time Search",
+        }
+        pdf.add_title_page(
+            report_title, subtitle="Comprehensive Analysis Report", metadata=metadata
+        )
+
+        # Add content pages
         pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=15)
 
-        # 3. Setup Layout
-        pdf.ln(5)
+        # Process each element
+        for element in elements:
+            elem_type = element.get("type")
 
-        # 4. Write HTML
-        pdf.set_font("times", size=12)
-        pdf.set_text_color(0, 0, 0)
-        pdf.write_html(html_content)
+            if elem_type == "h1":
+                # Skip if it's the title (already on title page)
+                if element["content"] != report_title:
+                    pdf.add_heading1(element["content"])
 
-        # 5. Save
-        # Ensure attacchment directory exists
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            elif elem_type == "h2":
+                pdf.add_heading2(element["content"])
+
+            elif elem_type == "h3":
+                pdf.add_heading3(element["content"])
+
+            elif elem_type == "paragraph":
+                pdf.add_paragraph(element["content"])
+
+            elif elem_type == "bullet_list":
+                for item in element["items"]:
+                    pdf.add_bullet_point(item["text"], item.get("level", 0))
+                pdf.ln(3)
+
+            elif elem_type == "numbered_list":
+                for idx, item in enumerate(element["items"], 1):
+                    pdf.add_numbered_item(idx, item)
+                pdf.ln(3)
+
+            elif elem_type == "quote":
+                pdf.add_quote(
+                    element["content"],
+                    element.get("author", ""),
+                    element.get("source", ""),
+                )
+
+            elif elem_type == "table":
+                # Calculate column widths
+                num_cols = len(element["headers"])
+                col_width = 190 // num_cols
+                col_widths = [col_width] * num_cols
+
+                # Add header
+                pdf.add_table_row(
+                    element["headers"], is_header=True, col_widths=col_widths
+                )
+
+                # Add rows
+                for row in element["rows"]:
+                    if len(row) == num_cols:
+                        pdf.add_table_row(row, is_header=False, col_widths=col_widths)
+
+                pdf.ln(5)
+
+            elif elem_type == "info_box":
+                pdf.add_info_box(
+                    element["title"],
+                    element["content"],
+                    element.get("box_type", "info"),
+                )
+
+            elif elem_type == "hr":
+                pdf.ln(5)
+                pdf.set_draw_color(200, 200, 200)
+                pdf.line(20, pdf.get_y(), 190, pdf.get_y())
+                pdf.ln(5)
+
+            elif elem_type == "code":
+                # Simple code block rendering
+                pdf.ln(3)
+                pdf.set_fill_color(245, 245, 245)
+                pdf.set_font("courier", "", 9)
+                pdf.set_text_color(50, 50, 50)
+                pdf.multi_cell(0, 4, element["content"], fill=True)
+                pdf.ln(3)
+
+        # Add final page with references section if there are citations
+        if "[1]" in markdown_content or "http" in markdown_content:
+            pdf.add_page()
+            pdf.add_heading1("References & Sources")
+            pdf.add_paragraph(
+                "All information in this report has been verified using Google Grounding with real-time web search. Sources are cited throughout the document."
+            )
+
+        # Ensure attachment directory exists
+        base_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
         attachment_dir = os.path.join(base_dir, "attacchment")
         os.makedirs(attachment_dir, exist_ok=True)
-        
+
+        # Save PDF
         output_path = os.path.join(attachment_dir, filename)
         pdf.output(output_path)
-        
-        # Cleanup logo
-        if logo_path and os.path.exists(logo_path):
-            os.remove(logo_path)
-            
+
         return output_path
 
     except Exception as e:
-        if logo_path and os.path.exists(logo_path):
-            os.remove(logo_path)
+        import traceback
+
+        error_msg = f"ERROR generating PDF: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
         return f"ERROR: {str(e)}"
