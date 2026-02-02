@@ -779,3 +779,54 @@ This project is for educational purposes.
 ## Author
 
 Created as part of the Composio Agent project.
+
+---
+
+## 🆕 Google Grounding Implementation (Updated Feb 2026)
+
+### Overview
+
+The system now uses **Google Gemini Grounding** instead of SERPER API for real-time web search with automatic citations.
+
+### Key Changes
+
+- **Search Engine**: SERPER → Google Gemini Grounding
+- **API Key**: `SERPER_API_KEY` → `GOOGLE_API_KEY`
+- **Features**: Added automatic citations and source attribution
+- **New**: AI-generated images for political quotes in PDFs
+
+### Documentation
+
+- **Quick Start**: [QUICKSTART.md](QUICKSTART.md) - 5-minute setup guide
+- **Full Documentation**: [GOOGLE_GROUNDING_IMPLEMENTATION.md](GOOGLE_GROUNDING_IMPLEMENTATION.md) - Complete technical details
+
+### Quick Setup
+
+```bash
+# Add to .env
+cp gmail-agent/.env.example gmail-agent/.env
+# Edit: GOOGLE_API_KEY=your-google-api-key
+
+# Install dependencies
+pip install google-genai>=1.0.0
+```
+
+### New Features
+
+1. **Real-time Web Search**: Grounded responses with live citations
+2. **Political Quotes Research**: Find and categorize politician statements
+3. **Smart PDF Generation**: Auto-generate images for quotes
+4. **Email Formatting**: Beautiful text-only email formatting
+
+### Model Support
+
+| Model | Grounding | Recommendation |
+|-------|-----------|----------------|
+| gemini-2.0-flash | ✅ | **Recommended** |
+| gemini-2.5-flash | ✅ | Latest version |
+| gemini-2.5-pro | ✅ | Higher quality |
+
+---
+
+**Last Updated:** February 2026  
+**Grounding Implementation:** v1.0.0
