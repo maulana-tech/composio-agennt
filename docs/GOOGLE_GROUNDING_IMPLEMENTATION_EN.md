@@ -1,89 +1,144 @@
-# Dokumentasi Implementasi Google Gemini Grounding
+# Google Gemini Grounding Implementation Documentation
 
-## Ringkasan
+## Overview
 
-Dokumentasi lengkap implementasi Google Gemini Grounding dengan Search untuk sistem AI Agent. Fitur ini menggantikan SERPER API dengan kemampuan real-time web search dan citations yang lebih akurat.
+Complete documentation for implementing Google Gemini Grounding with Search for AI Agent systems. This feature replaces SERPER API with more accurate real-time web search and citation capabilities.
 
-## Daftar Isi
+## Table of Contents
 
-1. [Apa itu Google Grounding?](#apa-itu-google-grounding)
-2. [Arsitektur Sistem](#arsitektur-sistem)
-3. [File yang Dimodifikasi](#file-yang-dimodifikasi)
-4. [Implementasi Detail](#implementasi-detail)
-5. [Konfigurasi](#konfigurasi)
-6. [Penggunaan](#penggunaan)
-7. [Fitur-fitur](#fitur-fitur)
+1. [What is Google Grounding?](#what-is-google-grounding)
+2. [System Architecture](#system-architecture)
+3. [Modified Files](#modified-files)
+4. [Implementation Details](#implementation-details)
+5. [Configuration](#configuration)
+6. [Usage](#usage)
+7. [Features](#features)
 8. [Troubleshooting](#troubleshooting)
+9. [Appendix: Smart Search Logic](#appendix-smart-search-logic)
 
 ---
 
-## Apa itu Google Grounding?
+## What is Google Grounding?
 
-Google Grounding adalah fitur Gemini API yang menghubungkan model AI dengan konten web real-time. Ini memungkinkan:
+Google Grounding is a Gemini API feature that connects AI models to real-time web content. It enables:
 
-- **Real-time Information**: Akses data terbaru dari internet
-- **Factual Accuracy**: Mengurangi halusinasi dengan grounding pada data web
-- **Citations**: Setiap jawaban disertai sumber yang dapat diverifikasi
-- **Automatic Search**: Model menentukan sendiri kapan perlu melakukan pencarian
+- **Real-time Information**: Access to the latest data from the internet
+- **Factual Accuracy**: Reduces hallucinations by grounding responses in web data
+- **Citations**: Every answer includes verifiable sources
+- **Automatic Search**: The model determines when to perform searches automatically
 
-### Keunggulan dibanding SERPER:
+### Advantages over SERPER:
 
-| Fitur | SERPER | Google Grounding |
-|-------|--------|------------------|
-| Real-time | Ya | Ya |
-| Citations Otomatis | Tidak | Ya |
-| Query Generation | Manual | Otomatis |
-| Response Synthesis | Manual | Otomatis |
-| Source Quality | Bervariasi | Prioritas authoritative |
-| Pricing | Per query | Per search yang dieksekusi |
+| Feature | SERPER | Google Grounding |
+|---------|--------|------------------|
+| Real-time | Yes | Yes |
+| Automatic Citations | No | Yes |
+| Query Generation | Manual | Automatic |
+| Response Synthesis | Manual | Automatic |
+| Source Quality | Variable | Authoritative priority |
+| Pricing | Per query | Per executed search |
 
 ---
 
-## Arsitektur Sistem
+## System Architecture
 
+```mermaid
+flowchart TB
+    subgraph User["User Interface"]
+        U[User Request]
+    end
+    
+    subgraph Agent["AI Agent"]
+        A[Chatbot Agent]
+        D{Search Decision}
+    end
+    
+    subgraph Search["Search Layer"]
+        G[Google Grounding Tool]
+        GM[Gemini API with Search]
+    end
+    
+    subgraph Web["Web Layer"]
+        W[Real-time Web Search]
+    end
+    
+    subgraph Output["Response Layer"]
+        S[Synthesized Response + Metadata]
+        F[Formatted Output]
+    end
+    
+    U --> A
+    A --> D
+    D -->|Current/Recent Info| G
+    D -->|Historical/General| F
+    G --> GM
+    GM --> W
+    W --> S
+    S --> F
+    
+    style User fill:#e1f5ff
+    style Agent fill:#fff4e1
+    style Search fill:#e1ffe1
+    style Web fill:#ffe1e1
+    style Output fill:#f0e1ff
 ```
-User Request
-     ↓
-Chatbot Agent
-     ↓
-Google Grounding Tool (google_search)
-     ↓
-Gemini API dengan Search
-     ↓
-Real-time Web Search
-     ↓
-Synthesized Response + Metadata
-     ↓
-Formatted Output (Chat/PDF/Email)
+
+### Workflow:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant D as Decision Logic
+    participant S as Search Tool
+    participant G as Gemini API
+    participant W as Web
+    participant R as Response
+
+    U->>A: Send Query
+    A->>D: Analyze Query Type
+    
+    alt Needs Real-time Data
+        D->>S: Call search_google()
+        S->>G: Generate with grounding
+        G->>W: Execute Web Search
+        W->>G: Return Results
+        G->>S: Synthesize Response
+        S->>R: Return with Citations
+    else Use Training Data
+        D->>R: Generate from LLM
+    end
+    
+    R->>U: Final Response
 ```
 
-### Alur Kerja:
-
-1. **User Prompt** → Agent menerima request
-2. **Prompt Analysis** → Gemini menentukan apakah perlu search
-3. **Google Search** → Otomatis generate & execute search queries
-4. **Result Processing** → Sintesis informasi dari hasil pencarian
-5. **Grounded Response** → Output dengan citations dan sources
-6. **groundingMetadata** → Structured data dengan web results
+1. **User Prompt** → Agent receives request
+2. **Prompt Analysis** → Determines if web search is needed
+3. **Decision Point** → Check for time-sensitive keywords
+4. **Google Search** (if needed) → Automatically generates & executes search queries
+5. **Result Processing** → Synthesizes information from search results
+6. **Grounded Response** → Output with citations and sources
+7. **groundingMetadata** → Structured data with web results
 
 ---
 
-## File yang Dimodifikasi
+## Modified Files
 
 ### 1. `gmail-agent/server/chatbot.py`
 
-**Fungsi Baru:**
-- `create_grounding_tools()` - Menggantikan `create_serper_tools()`
-- `search_google()` - Tool untuk search dengan grounding
+**New Functions:**
+- `create_grounding_tools()` - Replaces `create_serper_tools()`
+- `search_google()` - Tool for grounded search
+- `intelligent_search_decision()` - Determines when to search
 
-**Perubahan Utama:**
+**Key Changes:**
 ```python
-# Sebelum (SERPER)
+# Before (SERPER)
 def create_serper_tools():
     serper_api_key = os.environ.get("SERPER_API_KEY")
-    # HTTP request ke google.serper.dev
+    # HTTP request to google.serper.dev
 
-# Sesudah (Google Grounding)
+# After (Google Grounding)
 def create_grounding_tools():
     from google import genai
     from google.genai import types
@@ -99,35 +154,35 @@ def create_grounding_tools():
 
 ### 2. `gmail-agent/server/email_analysis_agents.py`
 
-**WebResearchAgent yang Diperbarui:**
+**Updated WebResearchAgent:**
 
 ```python
 class WebResearchAgent:
     def __init__(self, google_api_key: str):
         self.llm = ChatGoogleGenerativeAI(...)
-        # Hapus: self.serper_api_key
-        # Tambah: Google Grounding client
+        # Removed: self.serper_api_key
+        # Added: Google Grounding client
         
     async def conduct_research(self, research_plan: Dict) -> Dict:
-        # Hapus: HTTP request ke Serper
-        # Tambah: Gemini with grounding_tool
+        # Removed: HTTP request to Serper
+        # Added: Gemini with grounding_tool
 ```
 
 ### 3. `gmail-agent/.env.example`
 
-**Konfigurasi Environment:**
+**Environment Configuration:**
 
 ```bash
-# Sebelum
+# Before
 SERPER_API_KEY=your-serper-api-key
 
-# Sesudah  
-GOOGLE_API_KEY=your-google-api-key  # WAJIB untuk Grounding
+# After  
+GOOGLE_API_KEY=your-google-api-key  # REQUIRED for Grounding
 ```
 
 ### 4. `gmail-agent/requirements.txt`
 
-**Dependency Baru:**
+**New Dependency:**
 
 ```
 google-genai>=1.0.0
@@ -135,9 +190,9 @@ google-genai>=1.0.0
 
 ---
 
-## Implementasi Detail
+## Implementation Details
 
-### 1. Setup Google Grounding Client
+### 1. Google Grounding Client Setup
 
 ```python
 from google import genai
@@ -171,13 +226,13 @@ def create_grounding_tools():
         return response.text
 ```
 
-### 2. Extract Citations dari Metadata
+### 2. Extracting Citations from Metadata
 
 ```python
 if response.candidates[0].grounding_metadata:
     metadata = response.candidates[0].grounding_metadata
     
-    # Search queries yang digunakan
+    # Search queries used
     web_search_queries = metadata.web_search_queries
     
     # Web sources
@@ -187,14 +242,14 @@ if response.candidates[0].grounding_metadata:
             uri = chunk.web.uri
             title = chunk.web.title
     
-    # Text segments dengan citations
+    # Text segments with citations
     grounding_supports = metadata.grounding_supports
     for support in grounding_supports:
         segment_text = support.segment.text
         chunk_indices = support.grounding_chunk_indices
 ```
 
-### 3. Format Response dengan Citations
+### 3. Formatting Response with Citations
 
 ```python
 def add_citations(response):
@@ -219,28 +274,28 @@ def add_citations(response):
 
 ---
 
-## Konfigurasi
+## Configuration
 
 ### 1. Environment Variables
 
-Tambahkan ke file `.env`:
+Add to `.env` file:
 
 ```bash
-# Google API Key (WAJIB)
+# Google API Key (REQUIRED)
 GOOGLE_API_KEY=your-google-api-key-here
 
 # Model Configuration (Optional)
 GEMINI_MODEL=gemini-2.0-flash  # Default model for grounding
 ```
 
-### 2. Mendapatkan Google API Key
+### 2. Getting Google API Key
 
-1. Kunjungi [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Login dengan akun Google
-3. Klik "Create API Key"
-4. Copy API key ke file `.env`
+1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Login with Google Account
+3. Click "Create API Key"
+4. Copy API key to `.env` file
 
-### 3. Model yang Didukung
+### 3. Supported Models
 
 | Model | Grounding Support | Notes |
 |-------|-------------------|-------|
@@ -248,23 +303,23 @@ GEMINI_MODEL=gemini-2.0-flash  # Default model for grounding
 | gemini-2.5-flash | ✅ | Newer version |
 | gemini-2.5-pro | ✅ | Higher quality |
 
-**Catatan:** Gunakan `google_search` tool (bukan `google_search_retrieval` yang deprecated)
+**Note:** Use `google_search` tool (not deprecated `google_search_retrieval`)
 
 ---
 
-## Penggunaan
+## Usage
 
 ### 1. Basic Search
 
 ```python
-# Tool akan otomatis tersedia di agent
+# Tool automatically available in agent
 response = search_google("Who won the euro 2024?")
 ```
 
-Output akan mencakup:
-- Jawaban faktual
+Output includes:
+- Factual answer
 - Citations [1], [2], [3]
-- Links ke sources
+- Links to sources
 
 ### 2. Political Quotes Research
 
@@ -279,10 +334,10 @@ response = search_google(query)
 ### 3. Web Research Agent
 
 ```python
-# Inisialisasi dengan Google API Key
+# Initialize with Google API Key
 research_agent = WebResearchAgent(google_api_key="your-key")
 
-# Conduct research dengan grounding
+# Conduct research with grounding
 results = await research_agent.conduct_research({
     "search_queries": [
         "Prabowo economic policy 2024",
@@ -293,26 +348,26 @@ results = await research_agent.conduct_research({
 
 ---
 
-## Fitur-fitur
+## Features
 
 ### 1. Automatic Query Generation
 
-Gemini secara otomatis memutuskan:
-- Apakah perlu melakukan search
-- Query apa yang perlu dijalankan
-- Berapa banyak query (biasanya 1-3 untuk satu prompt)
+Gemini automatically decides:
+- Whether to perform a search
+- What queries to run
+- How many queries (usually 1-3 per prompt)
 
 ### 2. Real-Time Web Content
 
-Akses informasi terbaru:
-- Berita terkini
-- Update politik real-time
-- Data ekonomi terbaru
+Access latest information:
+- Current news
+- Real-time political updates
+- Latest economic data
 - Social media posts
 
 ### 3. Structured Citations
 
-Setiap response mencakup:
+Every response includes:
 ```json
 {
   "groundingMetadata": {
@@ -341,36 +396,20 @@ Setiap response mencakup:
 
 ### 4. Source Quality Prioritization
 
-Google secara otomatis memprioritaskan:
-- Domain authoritative (.gov, .edu)
-- News outlets kredibel
+Google automatically prioritizes:
+- Authoritative domains (.gov, .edu)
+- Credible news outlets
 - Official sources
 - Fact-checking sites
 
 ### 5. Multi-Language Support
 
-Grounding bekerja dengan semua bahasa yang didukung Gemini, termasuk:
-- Bahasa Indonesia
+Grounding works with all Gemini-supported languages including:
 - English
+- Bahasa Indonesia
 - Chinese
 - Japanese
-- Dan lainnya
-
----
-
-## Pricing
-
-### Gemini 3 Models:
-- **Billing**: Per search query yang dieksekusi
-- **Multiple Queries**: Jika model menjalankan 2 search dalam satu request = 2 billable uses
-- **Empty Queries**: Tidak dihitung dalam billing
-
-### Gemini 2.5 atau Lebih Lama:
-- **Billing**: Per prompt (tidak peduli berapa banyak search)
-
-### Perkiraan Biaya:
-- 1,000 search queries ≈ $35-50 USD (Gemini 3)
-- Cek [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing) untuk update terbaru
+- And more
 
 ---
 
@@ -378,34 +417,34 @@ Grounding bekerja dengan semua bahasa yang didukung Gemini, termasuk:
 
 ### 1. Error: "GOOGLE_API_KEY not found"
 
-**Solusi:**
+**Solution:**
 ```bash
-# Cek environment variable
+# Check environment variable
 echo $GOOGLE_API_KEY
 
-# Set manual
+# Set manually
 export GOOGLE_API_KEY="your-key-here"
 ```
 
 ### 2. Error: "google_search tool not available"
 
-**Penyebab:** Model yang digunakan tidak support grounding
+**Cause:** Model used doesn't support grounding
 
-**Solusi:**
+**Solution:**
 ```python
-# Gunakan model yang kompatibel
-model="gemini-2.0-flash"  # ✅ Support grounding
+# Use compatible model
+model="gemini-2.0-flash"  # ✅ Supports grounding
 
-# Hindari model experimental/preview untuk production
+# Avoid experimental/preview models for production
 ```
 
-### 3. Response tidak ada citations
+### 3. Response has no citations
 
-**Penyebab:** 
-- Query tidak memerlukan factual search
-- Model menentukan tidak perlu search
+**Cause:** 
+- Query doesn't require factual search
+- Model determined no search needed
 
-**Cek:**
+**Check:**
 ```python
 if response.candidates[0].grounding_metadata:
     print("Grounding used")
@@ -415,17 +454,17 @@ else:
 
 ### 4. Slow Response Time
 
-**Optimasi:**
-- Gunakan `gemini-2.0-flash` (paling cepat)
-- Limit jumlah query dalam satu request
-- Cache hasil search untuk query berulang
+**Optimization:**
+- Use `gemini-2.0-flash` (fastest)
+- Limit number of queries per request
+- Cache search results for repeated queries
 
 ### 5. Inaccurate Results
 
 **Improvement:**
-- Buat query lebih spesifik
-- Tambahkan constraint seperti "latest", "official", "verified"
-- Cross-check dengan multiple sources
+- Make queries more specific
+- Add constraints like "latest", "official", "verified"
+- Cross-check with multiple sources
 
 ---
 
@@ -473,9 +512,9 @@ def cached_search(query: str) -> str:
 
 ---
 
-## Perbandingan dengan SERPER
+## Comparison with SERPER
 
-### SERPER (Sebelum):
+### SERPER (Before):
 ```python
 # Manual query construction
 url = "https://google.serper.dev/search"
@@ -490,27 +529,27 @@ for item in organic:
     link = item["link"]
     snippet = item["snippet"]
 
-# Manual synthesis ke LLM
+# Manual synthesis to LLM
 ```
 
-### Google Grounding (Sesudah):
+### Google Grounding (After):
 ```python
-# Otomatis grounding_tool = types.Tool(google_search=types.GoogleSearch())
+# Automatic grounding_tool = types.Tool(google_search=types.GoogleSearch())
 config = types.GenerateContentConfig(tools=[grounding_tool])
 
-# Single API call, semua otomatis
+# Single API call, everything automatic
 response = client.models.generate_content(
     model="gemini-2.0-flash",
     contents=query,
     config=config
 )
 
-# Response sudah include citations
+# Response already includes citations
 ```
 
 ---
 
-## Referensi
+## References
 
 - [Google Grounding Documentation](https://ai.google.dev/gemini-api/docs/grounding)
 - [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing)
@@ -522,17 +561,16 @@ response = client.models.generate_content(
 ## Changelog
 
 ### v1.0.0 - Initial Implementation
-- Menggantikan SERPER dengan Google Grounding
-- Implementasi di chatbot.py dan email_analysis_agents.py
-- Support untuk real-time web search
-- Automatic citations dan source attribution
+- Replaced SERPER with Google Grounding
+- Implemented in chatbot.py and email_analysis_agents.py
+- Support for real-time web search
+- Automatic citations and source attribution
 
 ### v1.1.0 - Enhanced Features
-- Political quotes research dengan social media
-- PDF generation dengan structured formatting
-- Email formatting dengan visual structure
-- AI-generated quote images untuk PDF
-- Intelligent search decision logic
+- Political quotes research with social media
+- PDF generation with structured formatting
+- Email formatting with visual structure
+- AI-generated quote images for PDF
 
 ### v1.2.0 - Smart Search Intelligence
 - Added intelligent decision logic for when to use web search vs training data
@@ -542,20 +580,20 @@ response = client.models.generate_content(
 
 ---
 
-**Dokumen ini diupdate terakhir:** February 2026
+**Last Updated:** February 2026
 
 **Author:** AI Assistant
-**Project:** Composio Gmail Agent dengan Google Grounding
+**Project:** Composio Gmail Agent with Google Grounding
 
 ---
 
-## Lampiran A: Intelligent Search Decision Logic
+## Appendix: Smart Search Logic
 
-### Konsep Dasar
+### Basic Concept
 
-Agent sekarang memiliki kemampuan untuk membedakan kapan perlu menggunakan web search (Google Grounding) dan kapan cukup menjawab dari training data.
+The agent now has the ability to distinguish when to use web search (Google Grounding) and when to answer from training data.
 
-### Alur Keputusan
+### Decision Flow
 
 ```mermaid
 flowchart TD
@@ -578,27 +616,27 @@ flowchart TD
     J --> L[Direct answer]
 ```
 
-### Kriteria Penggunaan Search
+### Search Usage Criteria
 
-**WAJIB Search:**
-- Events terbaru (2024-2026)
+**MUST Search:**
+- Recent events (2024-2026)
 - Breaking news
-- Data real-time
-- Social media terkini
-- Verifikasi fakta kontemporer
+- Real-time data
+- Current social media
+- Contemporary fact verification
 
-**TIDAK Perlu Search:**
-- Sejarah (pre-2024)
-- Konsep umum
-- Teori established
-- Definisi
-- Kreatif writing
+**NO Search Needed:**
+- History (pre-2024)
+- General concepts
+- Established theories
+- Definitions
+- Creative writing
 
-### Contoh Implementasi dalam Code
+### Implementation in Code
 
 ```python
-# Di dalam chatbot.py
-# Agent menggunakan SYSTEM_PROMPT untuk menentukan:
+# Inside chatbot.py
+# Agent uses SYSTEM_PROMPT to determine:
 
 if contains_recent_date(query) or contains_current_keywords(query):
     # Use Google Grounding
@@ -610,10 +648,10 @@ else:
 
 ### Benefits
 
-1. **Cost Efficiency**: Mengurangi penggunaan API search untuk query yang tidak memerlukan real-time data
-2. **Response Speed**: Jawaban dari training data lebih cepat
-3. **Better UX**: General knowledge question dijawab langsung tanpa delay search
-4. **Accuracy**: Tetap menggunakan search untuk informasi yang memang memerlukan verifikasi real-time
+1. **Cost Efficiency**: Reduces API search usage for queries that don't need real-time data
+2. **Response Speed**: Training data answers are faster
+3. **Better UX**: General knowledge questions answered immediately without search delay
+4. **Accuracy**: Still uses search for information that actually requires real-time verification
 
 ### Testing
 
