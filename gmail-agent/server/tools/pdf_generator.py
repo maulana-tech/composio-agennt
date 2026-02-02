@@ -7,6 +7,94 @@ import os
 import random
 from typing import Optional, Dict, List, Tuple, Any
 from datetime import datetime
+import base64
+import io
+
+# Google Gemini Image Generation
+from google import genai
+from google.genai import types
+
+
+def generate_quote_image(
+    quote_text: str, author: str, context: str = "", api_key: str = None
+) -> Optional[str]:
+    """
+    Generate a visual image for a political quote using Gemini.
+    Returns the path to the generated image or None if failed.
+
+    Args:
+        quote_text: The quote text to visualize
+        author: The politician/person who said the quote
+        context: Additional context about the quote (event, date, etc.)
+        api_key: Google API key for Gemini
+
+    Returns:
+        Path to generated image file or None
+    """
+    if not api_key:
+        api_key = os.environ.get("GOOGLE_API_KEY")
+
+    if not api_key:
+        print("Warning: No GOOGLE_API_KEY available for image generation")
+        return None
+
+    try:
+        # Initialize Gemini client
+        client = genai.Client(api_key=api_key)
+
+        # Create a prompt for the image
+        prompt = f"""Create a professional, elegant visual representation of this political quote:
+        
+Quote: "{quote_text[:150]}..."
+Author: {author}
+Context: {context if context else "Political statement"}
+
+Design requirements:
+- Professional and clean design suitable for formal reports
+- Subtle background with Indonesian national colors (red and white) or professional blue
+- Include the quote text elegantly displayed
+- Author name prominently shown
+- Modern, minimalist style
+- High quality, suitable for printing in PDF
+- No overly complex graphics, focus on typography and clean layout
+- Inspiring and authoritative mood
+"""
+
+        # Generate image using Gemini 2.0 Flash
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp-image-generation",
+            contents=prompt,
+            config=types.GenerateContentConfig(response_modalities=["Text", "Image"]),
+        )
+
+        # Extract image from response
+        image_data = None
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                image_data = part.inline_data.data
+                break
+
+        if not image_data:
+            print("Warning: No image generated in response")
+            return None
+
+        # Save image to temporary file
+        import tempfile
+
+        img_bytes = base64.b64decode(image_data)
+
+        # Create temporary file
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".png", prefix="quote_"
+        )
+        temp_file.write(img_bytes)
+        temp_file.close()
+
+        return temp_file.name
+
+    except Exception as e:
+        print(f"Error generating quote image: {e}")
+        return None
 
 
 class ProfessionalPDF(FPDF, HTMLMixin):
@@ -191,6 +279,82 @@ class ProfessionalPDF(FPDF, HTMLMixin):
 
     def add_quote(self, text: str, author: str = "", source: str = ""):
         """Add a styled quote block."""
+        self.ln(4)
+
+        # Left border
+        self.set_fill_color(*self.accent_color)
+        self.rect(12, self.get_y(), 3, 20, "F")
+
+        # Quote text background
+        self.set_fill_color(*self.light_bg)
+        self.rect(18, self.get_y() - 2, 182, 24, "F")
+
+        # Quote text
+        self.set_xy(22, self.get_y())
+        self.set_font("helvetica", "I", 10)
+        self.set_text_color(*self.secondary_color)
+        self.multi_cell(170, 5, f'"{text}"')
+
+        # Attribution
+        if author or source:
+            self.ln(2)
+            self.set_x(22)
+            self.set_font("helvetica", "", 9)
+            self.set_text_color(128, 128, 128)
+            attribution = f"— {author}" if author else ""
+            if source:
+                attribution += f", {source}" if attribution else f"— {source}"
+            self.cell(0, 5, attribution, ln=True)
+
+        self.ln(6)
+
+    def add_quote_with_image(
+        self, text: str, author: str = "", source: str = "", image_path: str = None
+    ):
+        """Add a styled quote block with optional image visualization."""
+        # Add image if available
+        if image_path and os.path.exists(image_path):
+            try:
+                # Check if we need new page for image
+                if self.get_y() > 200:
+                    self.add_page()
+
+                # Add section divider
+                self.ln(5)
+                self.set_draw_color(*self.border_color)
+                self.line(20, self.get_y(), 190, self.get_y())
+                self.ln(8)
+
+                # Center the image
+                img_width = 160  # mm
+                x_center = (210 - img_width) / 2
+
+                # Add image with border
+                self.set_draw_color(*self.accent_color)
+                self.set_line_width(0.5)
+                self.rect(x_center - 2, self.get_y() - 2, img_width + 4, 92, "D")
+
+                # Insert image
+                self.image(image_path, x_center, self.get_y(), img_width)
+                self.ln(95)  # Space for image + padding
+
+                # Add caption below image
+                self.set_font("helvetica", "I", 9)
+                self.set_text_color(100, 100, 100)
+                caption = (
+                    f"Visual representation of {author}'s statement"
+                    if author
+                    else "Visual representation"
+                )
+                self.cell(0, 5, caption, ln=True, align="C")
+                self.ln(5)
+
+            except Exception as e:
+                print(f"Error adding quote image to PDF: {e}")
+                # Fall back to regular quote if image fails
+                pass
+
+        # Add the quote text (whether or not image was added)
         self.ln(4)
 
         # Left border
@@ -575,6 +739,8 @@ def generate_pdf_report(
     markdown_content: str,
     filename: str = "report.pdf",
     sender_email: str = "AI Assistant",
+    enable_quote_images: bool = True,
+    max_quote_images: int = 5,
 ) -> str:
     """
     Generate a professional, detailed PDF report from Markdown content.
@@ -582,6 +748,7 @@ def generate_pdf_report(
     Features:
     - Proper markdown parsing (headers, lists, quotes, tables)
     - Professional styling with consistent colors
+    - AI-generated images for political quotes (optional)
     - Title page with metadata
     - Page numbers and headers/footers
     - Styled quote blocks for politician quotes
@@ -592,6 +759,8 @@ def generate_pdf_report(
         markdown_content: Content in markdown format with proper structure
         filename: Name of the output PDF file
         sender_email: Email to generate logo from (optional)
+        enable_quote_images: Whether to generate AI images for quotes (default: True)
+        max_quote_images: Maximum number of quote images to generate (default: 5)
 
     Returns:
         Absolute file path of the generated PDF
@@ -610,6 +779,10 @@ def generate_pdf_report(
 
         # Parse markdown into structured elements
         elements = parse_markdown_content(markdown_content)
+
+        # Track generated images for cleanup
+        generated_images = []
+        quote_image_count = 0
 
         # Create PDF
         pdf = ProfessionalPDF(title=report_title, sender_email=sender_email)
@@ -656,11 +829,35 @@ def generate_pdf_report(
                 pdf.ln(3)
 
             elif elem_type == "quote":
-                pdf.add_quote(
-                    element["content"],
-                    element.get("author", ""),
-                    element.get("source", ""),
-                )
+                # Generate image for quote if enabled and under limit
+                image_path = None
+                if enable_quote_images and quote_image_count < max_quote_images:
+                    api_key = os.environ.get("GOOGLE_API_KEY")
+                    if api_key:
+                        image_path = generate_quote_image(
+                            element["content"],
+                            element.get("author", ""),
+                            element.get("source", ""),
+                            api_key,
+                        )
+                        if image_path:
+                            generated_images.append(image_path)
+                            quote_image_count += 1
+
+                # Add quote with or without image
+                if image_path:
+                    pdf.add_quote_with_image(
+                        element["content"],
+                        element.get("author", ""),
+                        element.get("source", ""),
+                        image_path,
+                    )
+                else:
+                    pdf.add_quote(
+                        element["content"],
+                        element.get("author", ""),
+                        element.get("source", ""),
+                    )
 
             elif elem_type == "table":
                 # Calculate column widths
@@ -721,9 +918,26 @@ def generate_pdf_report(
         output_path = os.path.join(attachment_dir, filename)
         pdf.output(output_path)
 
+        # Cleanup temporary quote images
+        for img_path in generated_images:
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+                    print(f"Cleaned up temporary image: {img_path}")
+            except Exception as cleanup_err:
+                print(f"Warning: Could not cleanup image {img_path}: {cleanup_err}")
+
         return output_path
 
     except Exception as e:
+        # Cleanup temporary images on error
+        for img_path in generated_images:
+            try:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+            except:
+                pass
+
         import traceback
 
         error_msg = f"ERROR generating PDF: {str(e)}\n{traceback.format_exc()}"
