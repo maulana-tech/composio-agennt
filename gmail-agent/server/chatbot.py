@@ -612,28 +612,36 @@ def get_agent_tools(user_id: str):
         markdown_content: str,
         filename: str = "report.pdf",
         sender_email: str = "AI Assistant",
+        enable_quote_images: bool = True,
     ) -> str:
         """
-        Generate a professional PDF report from Markdown content.
+        Generate a professional PDF report from Markdown content with AI-generated images for political quotes.
 
         Args:
             markdown_content: The markdown text to include in the report.
             filename: The name of the PDF file to generate.
             sender_email: The email address to derive a dynamic logo from (e.g., 'user@gmail.com' -> 'user' logo).
+            enable_quote_images: Whether to generate AI images for political quotes (default: True). Set to False to disable image generation.
 
         Returns:
             The ABSOLUTE FILE PATH that you MUST use for gmail_send_email attachment parameter.
+
+        Note:
+            When enable_quote_images=True, the PDF will include AI-generated visual representations
+            of political quotes (up to 5 images maximum) using Gemini image generation.
         """
         if not filename:
             filename = "report.pdf"
         print(
-            f"DEBUG: Executing PDF generator for {filename} with sender {sender_email}"
+            f"DEBUG: Executing PDF generator for {filename} with sender {sender_email}, quote_images={enable_quote_images}"
         )
         path = generate_pdf_report.invoke(
             {
                 "markdown_content": markdown_content,
                 "filename": filename,
                 "sender_email": sender_email,
+                "enable_quote_images": enable_quote_images,
+                "max_quote_images": 5,
             }
         )
         print(f"DEBUG: PDF generated at {path}")
@@ -653,6 +661,15 @@ You are an expert Research and Email Assistant specializing in political analysi
 - Categorize quotes by: official statements, campaign promises, policy positions, controversial remarks
 - Always cite the source: date, platform, context, and link if available
 - Example searches: "Prabowo quotes on defense policy 2024", "statements by Jokowi on economic policy Twitter"
+
+### 1.5. AI-Generated Quote Visualizations (PDF ONLY)
+When generating PDF reports, the system will AUTOMATICALLY create AI-generated images for political quotes:
+- **What it does**: Gemini AI generates professional visual representations of important political quotes
+- **When it triggers**: Automatically for each quote when `enable_quote_images=True` (default)
+- **Visual style**: Professional design with Indonesian national colors (red/white) or professional blue themes
+- **Limit**: Maximum 5 quote images per PDF to maintain quality and file size
+- **Best for**: Landmark statements, campaign promises, controversial quotes, official policy announcements
+- **No action needed**: This happens automatically when you call `generate_pdf_report_wrapped`
 
 ### 2. PDF Generation Decision Matrix
 CRITICAL: You must intelligently decide whether to generate a PDF:
@@ -957,9 +974,11 @@ Structure the markdown content with these sections:
 ## QUALITY STANDARDS:
 - PDF Reports: Minimum 3-5 pages of substantial content
 - Political Analysis: Minimum 5 quotes with full citations
+- Quote Visualizations: AI-generated images for up to 5 most significant quotes (automatic)
 - Fact-Checking: Multiple sources, conflicting info highlighted
 - Structure: Clear headings, bullet points, tables where appropriate
 - Tone: Professional, objective, evidence-based
+- Visual Appeal: PDF includes professional imagery for political quotes when available
 """
 
 
