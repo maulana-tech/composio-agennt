@@ -176,56 +176,44 @@ Format as JSON."""
 
 
 class WebResearchAgent:
-    """Agent for conducting web research using search tools."""
+    """Agent for conducting web research using Google Grounding with Search."""
 
     def __init__(self, google_api_key: str):
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash", temperature=0.1, google_api_key=google_api_key
         )
 
-        # Initialize search client
-        self.serper_api_key = os.environ.get("SERPER_API_KEY")
-
-    async def visit_webpage(self, url: str) -> str:
-        """Visit a webpage and extract its text content."""
+        # Initialize Google Grounding client
+        self.google_api_key = google_api_key
         try:
-            from bs4 import BeautifulSoup
-            from fake_useragent import UserAgent
-            
-            ua = UserAgent()
-            headers = {"User-Agent": ua.random}
-            
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True, verify=False) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                
-                # Handle PDF
-                if "application/pdf" in response.headers.get("content-type", "").lower() or url.lower().endswith(".pdf"):
-                    return f"[PDF content from {url} - skip extraction]"
+            from google import genai
+            from google.genai import types
 
-                html = response.text
-                soup = BeautifulSoup(html, "html.parser")
-                for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                    element.decompose()
-                text = soup.get_text(separator="\n", strip=True)
-                text = re.sub(r'\n{3,}', '\n\n', text)
-                return text[:10000] # Limit to 10k chars
-        except Exception as e:
-            return f"Error visiting {url}: {str(e)}"
+            self.genai = genai
+            self.types = types
+            self.grounding_available = True
+        except ImportError:
+            self.grounding_available = False
 
     async def conduct_research(self, research_plan: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute the research plan using Serper (parallel).
+        Execute the research plan using Google Grounding with Search.
 
         Args:
             research_plan: Output from ResearchPlanningAgent
 
         Returns:
-            Research findings with sources and evidence
+            Research findings with sources and evidence from real-time web search
         """
         import asyncio
-        if not self.serper_api_key:
-            return {"error": "SERPER_API_KEY not configured for web research"}
+
+        if not self.grounding_available:
+            return {
+                "error": "Google Grounding library not available. Install with: pip install google-genai"
+            }
+
+        if not self.google_api_key:
+            return {"error": "GOOGLE_API_KEY not configured for web research"}
 
         research_results = {}
 
@@ -237,53 +225,80 @@ class WebResearchAgent:
         # Limit to 3 queries for performance
         search_queries = search_queries[:3]
 
-        async def search_and_visit(idx, query):
+        async def search_with_grounding(idx, query):
             try:
-                print(f"Searching for: {query}")
-                url = "https://google.serper.dev/search"
-                headers = {
-                    'X-API-KEY': self.serper_api_key,
-                    'Content-Type': 'application/json'
-                }
-                payload = json.dumps({"q": query})
-                
-                async with httpx.AsyncClient(timeout=15) as client:
-                    response = await client.post(url, headers=headers, data=payload)
-                    response.raise_for_status()
-                    result = response.json()
-                
-                organic_results = result.get("organic", [])[:3]
-                
-                # Visit the top result for each query to get deeper content
-                enriched_results = []
-                for res in organic_results:
-                    link = res.get("link")
-                    snippet = res.get("snippet", "")
-                    content = ""
-                    if link:
-                        print(f"Visiting: {link}")
-                        content = await self.visit_webpage(link)
-                    
-                    enriched_results.append({
-                        "title": res.get("title", ""),
-                        "link": link,
-                        "snippet": snippet,
-                        "full_content": content[:3000] # Limit per source
-                    })
+                print(f"Researching with Grounding: {query}")
 
-                return (idx, {
-                    "query": query,
-                    "results": enriched_results,
-                    "success": True,
-                })
+                # Initialize Gemini client
+                client = self.genai.Client(api_key=self.google_api_key)
+
+                # Create grounding tool with Google Search
+                grounding_tool = self.types.Tool(
+                    google_search=self.types.GoogleSearch()
+                )
+
+                # Configure generation with grounding tool
+                config = self.types.GenerateContentConfig(tools=[grounding_tool])
+
+                # Generate content with grounding
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=f"Research and provide factual information about: {query}. Include sources and citations.",
+                    config=config,
+                )
+
+                # Extract response text and metadata
+                result_text = response.text or "No results found"
+
+                # Extract sources from grounding metadata
+                sources = []
+                if response.candidates and response.candidates[0].grounding_metadata:
+                    metadata = response.candidates[0].grounding_metadata
+                    chunks = metadata.grounding_chunks
+
+                    if chunks:
+                        for i, chunk in enumerate(chunks):
+                            if chunk.web:
+                                sources.append(
+                                    {
+                                        "title": chunk.web.title or f"Source {i + 1}",
+                                        "link": chunk.web.uri,
+                                        "index": i + 1,
+                                    }
+                                )
+
+                enriched_results = [
+                    {
+                        "title": f"Grounded Research Result for: {query}",
+                        "link": sources[0]["link"] if sources else "",
+                        "snippet": result_text[:500] + "..."
+                        if len(result_text) > 500
+                        else result_text,
+                        "full_content": result_text,
+                        "sources": sources,
+                    }
+                ]
+
+                return (
+                    idx,
+                    {
+                        "query": query,
+                        "results": enriched_results,
+                        "success": True,
+                    },
+                )
             except Exception as e:
-                return (idx, {
-                    "query": query,
-                    "error": str(e),
-                    "success": False,
-                })
+                return (
+                    idx,
+                    {
+                        "query": query,
+                        "error": str(e),
+                        "success": False,
+                    },
+                )
+
         # Run all queries in parallel
-        tasks = [search_and_visit(i + 1, q) for i, q in enumerate(search_queries)]
+        tasks = [search_with_grounding(i + 1, q) for i, q in enumerate(search_queries)]
         results = await asyncio.gather(*tasks)
         for idx, res in results:
             research_results[f"query_{idx}"] = res
