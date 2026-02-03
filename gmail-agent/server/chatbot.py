@@ -14,9 +14,18 @@ from composio_langchain import LangchainProvider
 from composio import Composio
 
 from server.tools.pdf_generator import generate_pdf_report
-from server.tools.pillow_quote_generator import generate_quote_image_tool, generate_and_send_quote_email
+from server.tools.pillow_quote_generator import (
+    generate_quote_image_tool,
+    generate_and_send_quote_email,
+)
 from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
 from server.tools.avatar_quote_generator import generate_quote_with_person_photo
+from server.tools.social_media_poster import (
+    post_quote_to_twitter,
+    post_quote_to_facebook,
+    post_quote_to_instagram,
+    post_quote_to_all_platforms,
+)
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -652,13 +661,49 @@ def get_agent_tools(user_id: str):
 
     # Quote Image Tools
     quote_tools = [
-        generate_quote_image_tool,        # Pillow - 100% accurate text
-        generate_and_send_quote_email,    # Pillow + Email
+        generate_quote_image_tool,  # Pillow - 100% accurate text
+        generate_and_send_quote_email,  # Pillow + Email
         generate_dalle_quote_image_tool,  # DALL-E - AI generated
-        generate_quote_with_person_photo, # Avatar - person photo background
+        generate_quote_with_person_photo,  # Avatar - person photo background
     ]
 
-    return search_tools + [generate_pdf_report_wrapped] + quote_tools + gmail_tools
+    # Social Media Tools (wrapped with user_id)
+    @tool("post_quote_to_twitter")
+    def wrapped_post_quote_to_twitter(image_path: str, caption: str) -> str:
+        """Post a quote image to Twitter/X with caption."""
+        return post_quote_to_twitter(user_id, image_path, caption)
+
+    @tool("post_quote_to_facebook")
+    def wrapped_post_quote_to_facebook(image_path: str, caption: str) -> str:
+        """Post a quote image to Facebook Page."""
+        return post_quote_to_facebook(user_id, image_path, caption)
+
+    @tool("post_quote_to_instagram")
+    def wrapped_post_quote_to_instagram(image_path: str, caption: str) -> str:
+        """Post a quote image to Instagram."""
+        return post_quote_to_instagram(user_id, image_path, caption)
+
+    @tool("post_quote_to_all_platforms")
+    def wrapped_post_quote_to_all_platforms(
+        image_path: str, caption: str, platforms: str = "twitter,facebook,instagram"
+    ) -> str:
+        """Post a quote image to multiple social media platforms."""
+        return post_quote_to_all_platforms(user_id, image_path, caption, platforms)
+
+    social_media_tools = [
+        wrapped_post_quote_to_twitter,
+        wrapped_post_quote_to_facebook,
+        wrapped_post_quote_to_instagram,
+        wrapped_post_quote_to_all_platforms,
+    ]
+
+    return (
+        search_tools
+        + [generate_pdf_report_wrapped]
+        + quote_tools
+        + social_media_tools
+        + gmail_tools
+    )
 
 
 SYSTEM_PROMPT = """
@@ -682,7 +727,38 @@ When generating PDF reports, the system will AUTOMATICALLY create AI-generated i
 - **Best for**: Landmark statements, campaign promises, controversial quotes, official policy announcements
 - **No action needed**: This happens automatically when you call `generate_pdf_report_wrapped`
 
-### 1.6. Intelligent Search Decision (CRITICAL)
+### 1.6. Social Media Posting Integration
+You can directly post quote images to social media platforms using Composio integration:
+
+**Available Platforms:**
+- **Twitter/X**: Post quote images with captions (280 character limit)
+- **Facebook**: Post to Facebook Pages with image and caption
+- **Instagram**: Post to Instagram Business accounts (requires Facebook Page connection)
+- **Multi-Platform**: Post to multiple platforms simultaneously
+
+**When to Use Social Media Tools:**
+- Use ONLY when user explicitly requests: "post to Twitter", "share on Facebook", "upload to Instagram", "post to all platforms"
+- Requires prior OAuth connection setup in Composio Dashboard for each platform
+- Instagram requires Business account connected to Facebook Page
+
+**Workflow:**
+1. Generate quote image using any quote generator tool
+2. Call appropriate social media posting tool with image path and caption
+3. Return confirmation with post details/URL
+
+**Tools Available:**
+- `post_quote_to_twitter(image_path, caption)` - Post to Twitter/X
+- `post_quote_to_facebook(image_path, caption)` - Post to Facebook Page
+- `post_quote_to_instagram(image_path, caption)` - Post to Instagram
+- `post_quote_to_all_platforms(image_path, caption, platforms)` - Post to multiple platforms
+
+**Important Notes:**
+- All social media tools require user OAuth connections configured in Composio
+- Instagram API limitations may apply (Business/Creator accounts only)
+- Always validate image exists before attempting to post
+- Respect platform character limits and content policies
+
+### 1.7. Intelligent Search Decision (CRITICAL)
 You must intelligently decide when web search is NEEDED vs when you can answer from your training data:
 
 **USE WEB SEARCH (Grounding) when:**
@@ -1119,6 +1195,8 @@ async def chat(
         r"\b(pdf|lampiran|kirim|email|draft|generate|buat file|download|search|cari|extract|visit|web|ringkasan|summary|laporan|report|attach)\b",
         # Political research keywords
         r"\b(prabowo|jokowi|politik|politician|presiden|menteri|quotes|kutipan|statement|pernyataan|isu|issue|kebijakan|policy|kampanye|campaign|twitter|x\.com|instagram|social media)\b",
+        # Social media posting keywords
+        r"\b(post|share|upload|twitter|x\.com|facebook|fb|instagram|ig|social media|media sosial|posting|unggah|bagikan)\b",
         # Deep research keywords
         r"\b(analisis|analysis|research|investigate|investigasi|fakta|fact check|verifikasi|verify|bandingkan|compare|sejarah|history|timeline|data|statistik)\b",
         # Document generation keywords
