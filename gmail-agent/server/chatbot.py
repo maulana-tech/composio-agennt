@@ -14,6 +14,9 @@ from composio_langchain import LangchainProvider
 from composio import Composio
 
 from server.tools.pdf_generator import generate_pdf_report
+from server.tools.pillow_quote_generator import generate_quote_image_tool, generate_and_send_quote_email
+from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
+from server.tools.avatar_quote_generator import generate_quote_with_person_photo
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -647,7 +650,15 @@ def get_agent_tools(user_id: str):
         print(f"DEBUG: PDF generated at {path}")
         return path
 
-    return search_tools + [generate_pdf_report_wrapped] + gmail_tools
+    # Quote Image Tools
+    quote_tools = [
+        generate_quote_image_tool,        # Pillow - 100% accurate text
+        generate_and_send_quote_email,    # Pillow + Email
+        generate_dalle_quote_image_tool,  # DALL-E - AI generated
+        generate_quote_with_person_photo, # Avatar - person photo background
+    ]
+
+    return search_tools + [generate_pdf_report_wrapped] + quote_tools + gmail_tools
 
 
 SYSTEM_PROMPT = """
