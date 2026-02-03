@@ -1,6 +1,7 @@
 """
 OpenAI DALL-E Image Generator for Political Quotes
 Extension of pdf_generator.py with DALL-E support
+Can be used as a LangChain tool for AI agents
 """
 
 import os
@@ -9,7 +10,7 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 import requests
-import tempfile
+from langchain.tools import tool
 
 
 def generate_quote_image_dalle(
@@ -18,6 +19,7 @@ def generate_quote_image_dalle(
     context: str = "",
     style: str = "digital art",
     api_key: str = None,
+    output_path: str = None,
 ) -> Optional[str]:
     """
     Generate an AI image for a political quote using OpenAI DALL-E.
@@ -28,6 +30,7 @@ def generate_quote_image_dalle(
         context: Additional context about the quote
         style: Image style (digital art, photorealistic, watercolor, etc.)
         api_key: OpenAI API key (or uses OPENAI_API_KEY env var)
+        output_path: Where to save the image (auto-generated if None)
 
     Returns:
         Path to the generated image file, or None if failed
@@ -42,34 +45,35 @@ def generate_quote_image_dalle(
     try:
         client = openai.OpenAI(api_key=api_key)
 
-        # Create professional prompt for political quote visualization
-        prompt = f"""Create a professional, elegant visual quote image for:
+        # Create clean, minimalist prompt focused on readable typography
+        prompt = f"""Create a clean, minimalist quote graphic.
 
-QUOTE: "{quote_text[:200]}"
+THE EXACT QUOTE TO DISPLAY:
+"{quote_text[:150]}"
 
-AUTHOR: {author}
-CONTEXT: {context if context else "Political statement"}
+— {author}
 
-DESIGN REQUIREMENTS:
-- Style: {style} with professional, modern aesthetic
-- Background: Subtle gradient using Indonesian national colors (red and white) or professional navy blue
-- Typography: Clean, readable font showing the quote prominently
-- Layout: Balanced composition with quote text as focal point
-- Author name: Displayed elegantly at bottom
-- Mood: Inspiring, authoritative, presidential
-- Quality: High resolution, suitable for professional reports and presentations
-- No clutter, minimalist design, focus on the message
-- Add subtle decorative elements like geometric patterns or soft light effects
+CRITICAL DESIGN RULES:
+1. TYPOGRAPHY IS THE ONLY FOCUS - the quote text must be 100% readable and spelled correctly
+2. Use LARGE, BOLD, CLEAN sans-serif typography like Helvetica or Arial
+3. WHITE or very light colored text on a SIMPLE dark solid background
+4. Background: Single solid color - deep navy blue (#1a1a2e) or dark charcoal (#2d2d2d)
+5. NO decorative elements, NO icons, NO patterns, NO geometric shapes
+6. NO borders, NO frames, NO lines
+7. Just the quote centered on a plain dark background
+8. The author name should be smaller, positioned below the quote
+9. Generous spacing around the text
+10. Style: {style}
 
-Make it look like a professional social media graphic or presentation slide."""
+This should look like a simple PowerPoint slide with just text - nothing else. Clean and professional."""
 
         print(f"🎨 Generating DALL-E image for quote by {author}...")
 
-        # Generate image with DALL-E 3
+        # Generate image with DALL-E 3 in landscape format
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
-            size="1024x1024",
+            size="1792x1024",  # Landscape format
             quality="standard",
             n=1,
         )
@@ -82,17 +86,25 @@ Make it look like a professional social media graphic or presentation slide."""
         img_response = requests.get(image_url, timeout=30)
         img_response.raise_for_status()
 
-        # Save to file
-        temp_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".png",
-            prefix=f"quote_{author.lower().replace(' ', '_')}_",
-        )
-        temp_file.write(img_response.content)
-        temp_file.close()
+        # Save to attachment folder if no output_path specified
+        if not output_path:
+            attachment_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "attachment"
+            )
+            os.makedirs(attachment_dir, exist_ok=True)
+            
+            safe_author = author.lower().replace(' ', '_')[:15]
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"dalle_quote_{safe_author}_{timestamp}.png"
+            output_path = os.path.join(attachment_dir, filename)
 
-        print(f"✅ Image saved: {temp_file.name}")
-        return temp_file.name
+        # Save to file
+        with open(output_path, 'wb') as f:
+            f.write(img_response.content)
+
+        print(f"✅ Image saved: {output_path}")
+        return output_path
 
     except openai.APIError as e:
         print(f"❌ OpenAI API Error: {e}")
@@ -114,10 +126,10 @@ def test_generate_and_send_email():
     print("🧪 TEST: Generate Political Quote Image with DALL-E")
     print("=" * 60)
 
-    # Test quote - Prabowo on defense policy
-    test_quote = "Kita akan membangun pertahanan yang kuat untuk melindungi kedaulatan dan keamanan bangsa."
+    # Test quote - Prabowo on defense modernization (English)
+    test_quote = "We are committed to building a strong and modern defense system to protect our nation's sovereignty and ensure long-term security for all citizens."
     test_author = "Prabowo Subianto"
-    test_context = "Defense Policy Statement 2024"
+    test_context = "Presidential Address on National Defense Policy, January 2025"
 
     # Generate image
     print(f'\n📝 Quote: "{test_quote}"')
@@ -212,6 +224,44 @@ Powered by OpenAI DALL-E 3
     except Exception as e:
         print(f"\n❌ Failed to send email: {e}")
         print(f"💡 Image saved at: {image_path} (not deleted due to error)")
+
+
+# ============================================================
+# LangChain Tool for Agent Integration
+# ============================================================
+
+@tool
+def generate_dalle_quote_image_tool(
+    quote_text: str,
+    author: str,
+    context: str = "",
+    style: str = "digital art",
+) -> str:
+    """
+    Generate a quote image using OpenAI DALL-E 3.
+    Use this for AI-generated artistic quote graphics. Note: DALL-E may have imperfect text rendering.
+    For 100% accurate text, use generate_quote_image_tool (Pillow-based) instead.
+    
+    Args:
+        quote_text: The quote text to display (max ~150 characters for best results)
+        author: Name of the person who said the quote
+        context: Optional context like "Presidential Speech, 2025"
+        style: Image style - "digital art", "photorealistic", "watercolor", etc.
+    
+    Returns:
+        Absolute path to the generated PNG image file
+    """
+    result = generate_quote_image_dalle(
+        quote_text=quote_text,
+        author=author,
+        context=context,
+        style=style,
+    )
+    
+    if result:
+        return f"DALL-E quote image generated successfully: {result}"
+    else:
+        return "Failed to generate DALL-E quote image. Check if OPENAI_API_KEY is set."
 
 
 if __name__ == "__main__":
