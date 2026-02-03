@@ -21,3 +21,4 @@ markdown[extra]
 pillow
 python-multipart
 google-genai>=1.0.0
+openai>=1.0.0
