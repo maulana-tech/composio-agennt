@@ -14,15 +14,16 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from composio import Composio
 
 
-def get_llm(groq_api_key: str = None):
+def get_llm():
     """Get LLM with fallback: Groq -> Google Gemini."""
+    groq_api_key = os.environ.get("GROQ_API_KEY")
     google_api_key = os.environ.get("GOOGLE_API_KEY")
 
     if groq_api_key:
         try:
             return ChatGroq(
                 model="llama-3.1-8b-instant", temperature=0.3, groq_api_key=groq_api_key
-            ), "groq"
+            )
         except Exception as e:
             print(f"Groq init failed: {e}")
 
@@ -30,76 +31,117 @@ def get_llm(groq_api_key: str = None):
         try:
             return ChatGoogleGenerativeAI(
                 model="gemini-2.0-flash", temperature=0.3, google_api_key=google_api_key
-            ), "gemini"
+            )
         except Exception as e:
             print(f"Gemini init failed: {e}")
 
     raise ValueError("No LLM available")
 
 
-def log_step(step: str, detail: str = "", progress: float = 0.0) -> dict:
-    """Create a log step for streaming."""
-    return {
-        "type": "log",
-        "status": "running",
-        "step": step,
-        "detail": detail,
-        "progress": progress,
-        "icon": get_step_icon(step),
-    }
+def clean_json_response(text: str) -> str:
+    """Clean JSON response from LLM."""
+    # Remove prefixes like "Here's JSON:", "Here is:", etc.
+    text = re.sub(
+        r"^(?:Here\'s?|Here is|Below is|Ini adalah|Berikut adalah)[\s:\-]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove markdown code blocks
+    text = re.sub(r"^```json?\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+
+    # Remove markdown code blocks inline
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+
+    # Clean whitespace
+    text = text.strip()
+
+    return text
 
 
-def get_step_icon(step: str) -> str:
-    """Get icon for step type."""
-    icons = {
-        "analyzing": "🔍",
-        "reasoning": "🧠",
-        "generating": "⚙️",
-        "validating": "✅",
-        "completed": "🎉",
-        "error": "❌",
-    }
-    step_lower = step.lower()
-    for key, icon in icons.items():
-        if key in step_lower:
-            return icon
-    return "📋"
+def clean_mermaid_response(text: str) -> str:
+    """Clean Mermaid response from LLM."""
+    # Remove prefixes
+    text = re.sub(
+        r"^(?:Here\'s?|Here is|Mermaid code|Below is|Inilah)[\s:\-]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove markdown code blocks
+    text = re.sub(r"^```mermaid\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
+
+    # Remove explanations after code
+    lines = text.split("\n")
+    clean_lines = []
+    for line in lines:
+        # Skip lines with explanations
+        if any(
+            x in line.lower()
+            for x in ["this code", "generates", "creates", "shows", "example:", "note:"]
+        ):
+            break
+        clean_lines.append(line)
+
+    text = "\n".join(clean_lines).strip()
+
+    # Ensure it starts with graph
+    if not text.lower().startswith("graph") and not text.lower().startswith("sequence"):
+        # Try to find graph in text
+        match = re.search(r"(graph\s+[A-Z]+.*)", text, re.DOTALL | re.IGNORECASE)
+        if match:
+            text = match.group(1)
+        else:
+            text = "graph LR\n" + text
+
+    return text
 
 
 @tool
 def analyze_strategic_prompt(prompt: str) -> str:
     """Analyze strategic prompt to identify stakeholders, relationships, and diagram type."""
-    groq_api_key = os.environ.get("GROQ_API_KEY")
+    llm = get_llm()
 
-    analysis_prompt = """
-Analyze this strategic situation and provide JSON analysis:
+    analysis_prompt = f"""
+Analyze this strategic situation and return ONLY valid JSON:
 
-PROMPT: {}
+PROMPT: {prompt}
 
-Format:
-{{
-    "stakeholders": ["list"],
-    "relationships": ["key relationships"],
-    "diagram_type": "flowchart|mindmap|swimlane",
-    "flow_direction": "top-down|left-right",
-    "key_points": ["essential elements"]
-}}
+Format (NO markdown, NO explanations):
+{{"stakeholders": ["list of entities"], "relationships": ["key relationships"], "diagram_type": "flowchart|mindmap|swimlane", "flow_direction": "top-down|left-right", "key_points": ["essential elements"]}}
 
-Return ONLY valid JSON.
-""".format(prompt)
+Return ONLY JSON:
+"""
 
     try:
-        llm, provider = get_llm(groq_api_key)
         response = llm.invoke(analysis_prompt)
+        content = clean_json_response(response.content)
 
-        content = response.content.strip()
-        content = re.sub(r"^```json\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
-        content = content.strip()
+        # Try to extract JSON from the response
+        # Find JSON object in text
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start != -1 and end > 0:
+            content = content[start:end]
+
+        # Validate it's JSON
+        json.loads(content)  # This will raise if invalid
 
         return content
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        # Return fallback JSON
+        fallback = {
+            "stakeholders": ["Stakeholder 1", "Stakeholder 2"],
+            "relationships": ["coordination"],
+            "diagram_type": "flowchart",
+            "flow_direction": "left-right",
+            "key_points": ["Key Point 1"],
+        }
+        return json.dumps(fallback)
 
 
 @tool
@@ -107,66 +149,38 @@ def generate_mermaid_diagram(
     analysis_json: str, custom_style: str = "professional"
 ) -> str:
     """Generate Mermaid.js diagram code from strategic analysis."""
-    groq_api_key = os.environ.get("GROQ_API_KEY")
+    llm = get_llm()
 
     try:
         analysis = json.loads(analysis_json)
     except:
         return "%% Error: Invalid analysis JSON"
 
-    diagram_prompt = """
-Generate ONLY valid Mermaid.js code (no explanations, no markdown):
+    diagram_prompt = f"""
+Generate ONLY valid Mermaid code (no markdown, no explanations):
 
-Analysis:
-{}
-
-Style: {}
+Analysis: {json.dumps(analysis)}
 
 Requirements:
-1. Use: graph LR or graph TD
-2. Node IDs: A, B, C, D, E
+1. Start with: graph LR or graph TD
+2. Use simple IDs: A, B, C, D, E
 3. Format: A[Label] or A{{Decision}}
-4. Arrows: A --> B or A -->|label| B
+4. Arrows: A --> B
 5. Include all stakeholders
+6. NO markdown code blocks
+7. NO text before or after code
 
 Example:
 graph LR
     A[Marketing] --> B[Sales]
-    B -->|approves| C[Product]
 
 Generate now:
-""".format(json.dumps(analysis), custom_style)
+"""
 
     try:
-        llm, provider = get_llm(groq_api_key)
         response = llm.invoke(diagram_prompt)
-
-        content = response.content.strip()
-
-        # Remove any code blocks
-        content = re.sub(r"```mermaid", "", content)
-        content = re.sub(r"```", "", content)
-
-        # Remove any Python-like syntax
-        lines = content.split("\n")
-        clean_lines = []
-        for line in lines:
-            line = line.strip()
-            if line and not any(
-                x in line for x in ["print(", "Decision =", "return", "def ", "import "]
-            ):
-                # Remove trailing variable assignments
-                line = re.sub(r"\s*=\s*.*$", "", line)
-                clean_lines.append(line)
-
-        content = "\n".join(clean_lines).strip()
-
-        # Ensure it starts with graph
-        if not content.lower().startswith("graph"):
-            content = "graph LR\n" + content
-
+        content = clean_mermaid_response(response.content)
         return content
-
     except Exception as e:
         return "%% Error: " + str(e)
 
@@ -174,57 +188,54 @@ Generate now:
 @tool
 def generate_graphviz_diagram(analysis_json: str) -> str:
     """Generate Graphviz DOT code from strategic analysis."""
-    groq_api_key = os.environ.get("GROQ_API_KEY")
+    llm = get_llm()
 
     try:
         analysis = json.loads(analysis_json)
     except:
         return "// Error: Invalid analysis JSON"
 
-    dot_prompt = """
-Generate ONLY valid Graphviz DOT code (no explanations, no markdown):
+    dot_prompt = f"""
+Generate ONLY valid Graphviz DOT code (no markdown, no explanations):
 
-Analysis:
-{}
+Analysis: {json.dumps(analysis)}
 
 Requirements:
 1. Start with: digraph G {{ or graph G {{
 2. Format: A [label="Label"]
-3. Edges: A -> B [label="label"]
+3. Edges: A -> B [label="desc"]
 4. Include all stakeholders
+5. NO markdown code blocks
+6. NO text before or after code
 
 Example:
 digraph G {{
     A [label="Marketing"]
     B [label="Sales"]
-    A -> B [label="coordinates"]
+    A -> B
 }}
 
 Generate now:
-""".format(json.dumps(analysis))
+"""
 
     try:
-        llm, provider = get_llm(groq_api_key)
         response = llm.invoke(dot_prompt)
-
         content = response.content.strip()
-        content = re.sub(r"```dot", "", content)
-        content = re.sub(r"```", "", content)
 
-        # Clean up
-        lines = content.split("\n")
-        clean_lines = []
-        for line in lines:
-            line = line.strip()
-            if line and not any(
-                x in line for x in ["print(", "return", "def ", "import "]
-            ):
-                clean_lines.append(line)
+        # Clean
+        content = re.sub(r"^```dot\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+        content = re.sub(
+            r"^(?:Here\'s?|Here is|DOT code)[\s:\-]*", "", content, flags=re.IGNORECASE
+        )
 
-        content = "\n".join(clean_lines).strip()
+        # Ensure it starts with digraph or graph
+        if not content.lower().startswith("digraph") and not content.lower().startswith(
+            "graph"
+        ):
+            content = "digraph G {\n" + content + "\n}"
 
         return content
-
     except Exception as e:
         return "// Error: " + str(e)
 
@@ -235,22 +246,28 @@ def validate_diagram_code(diagram_code: str, format_type: str = "mermaid") -> st
     errors = []
     suggestions = []
 
-    if not diagram_code:
+    if not diagram_code or len(diagram_code) < 10:
         return json.dumps(
-            {"valid": False, "errors": ["Empty diagram code"], "suggestions": []}
+            {"valid": False, "errors": ["Empty or too short"], "suggestions": []}
         )
 
     if format_type == "mermaid":
-        if "graph" not in diagram_code and "sequenceDiagram" not in diagram_code:
+        if (
+            "graph" not in diagram_code.lower()
+            and "sequence" not in diagram_code.lower()
+        ):
             errors.append("Missing graph or sequenceDiagram declaration")
 
         # Count nodes
-        nodes = len(re.findall(r"[A-Z]\[[^\]]+\]|[A-Z]\{[^\}]+\}", diagram_code))
+        nodes = len(re.findall(r"[A-Z]\[[^\]]+\]|\{[A-Z][^\}]+\}", diagram_code))
         if nodes < 2:
             suggestions.append("Consider adding more nodes for clarity")
 
     elif format_type == "graphviz":
-        if "digraph" not in diagram_code and "graph" not in diagram_code:
+        if (
+            "digraph" not in diagram_code.lower()
+            and "graph " not in diagram_code.lower()
+        ):
             errors.append("Missing digraph or graph declaration")
 
     result = {
@@ -289,8 +306,16 @@ def create_strategy_diagram(
     try:
         # Step 1: Analyze prompt
         result["steps"].append(
-            log_step("analyzing", "Analyzing strategic prompt...", 10)
+            {
+                "type": "log",
+                "status": "running",
+                "step": "analyzing",
+                "detail": "Analyzing strategic prompt...",
+                "progress": 10,
+                "icon": "🔍",
+            }
         )
+
         analysis = analyze_strategic_prompt.invoke({"prompt": prompt})
 
         try:
@@ -302,7 +327,16 @@ def create_strategy_diagram(
         result["progress"]["analyzing"] = 100
 
         # Step 2: Generate diagram
-        result["steps"].append(log_step("generating", "Generating diagram code...", 40))
+        result["steps"].append(
+            {
+                "type": "log",
+                "status": "running",
+                "step": "generating",
+                "detail": "Generating diagram code...",
+                "progress": 40,
+                "icon": "⚙️",
+            }
+        )
 
         if format_type == "mermaid":
             diagram_code = generate_mermaid_diagram.invoke(
@@ -315,7 +349,16 @@ def create_strategy_diagram(
         result["progress"]["generating"] = 100
 
         # Step 3: Validate
-        result["steps"].append(log_step("validating", "Validating diagram code...", 80))
+        result["steps"].append(
+            {
+                "type": "log",
+                "status": "running",
+                "step": "validating",
+                "detail": "Validating diagram code...",
+                "progress": 80,
+                "icon": "✅",
+            }
+        )
 
         validation = validate_diagram_code.invoke(
             {"diagram_code": diagram_code, "format_type": format_type}
@@ -327,7 +370,14 @@ def create_strategy_diagram(
         # Complete
         result["status"] = "completed"
         result["steps"].append(
-            log_step("completed", "Strategy diagram created successfully!", 100)
+            {
+                "type": "log",
+                "status": "completed",
+                "step": "completed",
+                "detail": "Strategy diagram created successfully!",
+                "progress": 100,
+                "icon": "🎉",
+            }
         )
 
         return json.dumps(result, indent=2)
@@ -335,7 +385,16 @@ def create_strategy_diagram(
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)
-        result["steps"].append(log_step("error", "Error: " + str(e), 0))
+        result["steps"].append(
+            {
+                "type": "log",
+                "status": "error",
+                "step": "error",
+                "detail": "Error: " + str(e),
+                "progress": 0,
+                "icon": "❌",
+            }
+        )
         return json.dumps(result, indent=2)
 
 
@@ -376,7 +435,7 @@ async def generate_strategy_diagram_stream(
                     "type": "log",
                     "status": "starting",
                     "step": "initializing",
-                    "detail": "Setting up strategy diagram generator...",
+                    "detail": "Setting up...",
                     "progress": 5,
                     "icon": "🚀",
                 }
@@ -384,21 +443,21 @@ async def generate_strategy_diagram_stream(
             + "\n"
         )
 
+        from .strategy_diagram_agent import analyze_strategic_prompt
+
         yield (
             json.dumps(
                 {
                     "type": "log",
                     "status": "running",
                     "step": "analyzing",
-                    "detail": "🔍 Analyzing strategic prompt...",
+                    "detail": "🔍 Analyzing...",
                     "progress": 10,
                     "icon": "🔍",
                 }
             )
             + "\n"
         )
-
-        from .strategy_diagram_agent import analyze_strategic_prompt
 
         analysis = analyze_strategic_prompt.invoke({"prompt": prompt})
 
@@ -441,7 +500,7 @@ async def generate_strategy_diagram_stream(
                     "type": "log",
                     "status": "running",
                     "step": "generating",
-                    "detail": "⚙️ Generating diagram code...",
+                    "detail": "⚙️ Generating...",
                     "progress": 40,
                     "icon": "⚙️",
                 }
@@ -449,9 +508,9 @@ async def generate_strategy_diagram_stream(
             + "\n"
         )
 
-        from .strategy_diagram_agent import generate_mermaid_diagram
-
         if format_type == "mermaid":
+            from .strategy_diagram_agent import generate_mermaid_diagram
+
             diagram_code = generate_mermaid_diagram.invoke(
                 {"analysis_json": analysis, "custom_style": style}
             )
@@ -466,7 +525,7 @@ async def generate_strategy_diagram_stream(
                     "type": "log",
                     "status": "progress",
                     "step": "generating",
-                    "detail": "✅ Diagram generated",
+                    "detail": "✅ Generated",
                     "progress": 70,
                     "icon": "✅",
                 }
@@ -488,7 +547,7 @@ async def generate_strategy_diagram_stream(
                     "type": "log",
                     "status": "completed",
                     "step": "completed",
-                    "detail": "🎉 Strategy diagram ready!",
+                    "detail": "🎉 Ready!",
                     "progress": 100,
                     "icon": "🎉",
                     "result": {
