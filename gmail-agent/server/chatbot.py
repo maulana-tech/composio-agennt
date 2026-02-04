@@ -827,21 +827,45 @@ You can directly post quote images to social media platforms using Composio inte
 - Instagram requires Business account connected to Facebook Page
 
 **Workflow:**
-1. Generate quote image using any quote generator tool
-2. Call appropriate social media posting tool with image path and caption
+1. Generate quote image using any quote generator tool (e.g., `generate_quote_image_tool`)
+2. Use appropriate social media tool to post the image (see below)
 3. Return confirmation with post details/URL
 
-**Tools Available:**
-- **Dynamic Discovery**: The agent uses `COMPOSIO_SEARCH_TOOLS` to find social media capabilities.
-- **Workflow**:
-  1. CALL `COMPOSIO_SEARCH_TOOLS` with a query like "post to twitter" or "create facebook post".
-  2. The tool will return specific actions (e.g., `twitter_creation_of_a_post`) and their schemas.
-  3. CALL `COMPOSIO_MULTI_EXECUTE_TOOL` with the found slug and arguments (e.g., `{"text": "..."}`).
-- **Do NOT** hallucinate tool names like `post_quote_to_twitter`. use ONLY what `COMPOSIO_SEARCH_TOOLS` returns.
+**Available Social Media Tools:**
+The agent has direct access to social media tools for Twitter, Facebook, and Instagram:
+
+- **Facebook Tools**:
+  - `FACEBOOK_CREATE_PHOTO_POST` - Post photo with caption to Facebook Page
+    - Parameters: `page_id`, `message`, `url` (image URL) or `photo` (local file path)
+  - `FACEBOOK_CREATE_POST` - Post text only to Facebook Page
+    - Parameters: `page_id`, `message`
+  
+- **Twitter/X Tools**:
+  - `TWITTER_CREATE_TWEET_WITH_MEDIA` - Create tweet with image/video
+    - Parameters: `text` (tweet content), `media` (local file path or URL)
+    - Example: `{"text": "Tweet text", "media": "/path/to/image.jpg"}`
+  - `TWITTER_CREATION_OF_A_POST` - Create text-only tweet
+    - Parameters: `text` (tweet content)
+  - **Note**: Composio handles file upload automatically - just provide file path or URL
+  
+- **Instagram Tools**:
+  - Available through Instagram Business account connected to Facebook Page
+  - Similar media parameter support (local path or URL)
+  
+- **Meta Tools** (for advanced usage):
+  - `COMPOSIO_SEARCH_TOOLS` - Search for specific tools if needed
+  - `COMPOSIO_MULTI_EXECUTE_TOOL` - Execute multiple tools in parallel
+
+**Media Upload Guidelines:**
+- **Local Files**: Pass absolute file path (e.g., from `generate_quote_image` tool output)
+- **URLs**: Pass image URL directly
+- **Automatic Handling**: Composio SDK uploads files automatically - no manual upload step needed
+- **Supported Formats**: Images (JPG, PNG), Videos (MP4)
 
 **Important Notes:**
-- All social media tools require user OAuth connections configured in Composio
-- Instagram API limitations may apply (Business/Creator accounts only)
+- Facebook only supports Facebook Pages, not personal accounts
+- All tools require OAuth connections configured in Composio
+- Instagram requires Business/Creator accounts connected to Facebook Page
 - Always validate image exists before attempting to post
 - Respect platform character limits and content policies
 
