@@ -6,6 +6,7 @@ Provides native tools for Twitter, Facebook, and Instagram posting.
 import os
 import json
 from typing import List, Any, Optional
+from langchain_core.tools import tool
 from composio import Composio
 
 
@@ -17,8 +18,10 @@ def get_composio_client() -> Composio:
     return Composio(api_key=api_key)
 
 
-def upload_media_to_twitter(user_id: str, image_path: str) -> Optional[str]:
-    """Upload media to Twitter and get media_id."""
+@tool
+def upload_media_to_twitter(image_path: str) -> str:
+    """Upload media to Twitter and get media_id for posting."""
+    user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
     try:
         client = get_composio_client()
 
@@ -31,16 +34,27 @@ def upload_media_to_twitter(user_id: str, image_path: str) -> Optional[str]:
 
         if result.get("successful"):
             data = result.get("data", {}).get("data", {})
-            return data.get("id")
-        return None
+            media_id = data.get("id")
+            return f"✅ Media uploaded successfully! Media ID: {media_id}"
+        else:
+            error = result.get("data", {}).get(
+                "message", result.get("error", "Unknown error")
+            )
+            return f"❌ Upload failed: {error}"
 
     except Exception as e:
-        print(f"Twitter upload error: {e}")
-        return None
+        return f"❌ Twitter upload error: {str(e)}"
 
 
-def post_to_twitter(user_id: str, text: str, image_path: Optional[str] = None) -> str:
-    """Post to Twitter with optional image."""
+@tool
+def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
+    """Post to Twitter with optional image. Use this when user wants to post to Twitter/X.
+
+    Args:
+        text: The tweet content (max 280 characters)
+        image_path: Optional path to image file to attach
+    """
+    user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
     try:
         client = get_composio_client()
     except Exception as e:
@@ -49,34 +63,44 @@ def post_to_twitter(user_id: str, text: str, image_path: Optional[str] = None) -
     try:
         if image_path and os.path.exists(image_path):
             # Upload media first
-            media_id = upload_media_to_twitter(user_id, image_path)
+            upload_result = client.tools.execute(
+                slug="TWITTER_UPLOAD_MEDIA",
+                arguments={"media": image_path},
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
 
-            if media_id:
-                # Post with media_id
-                result = client.tools.execute(
-                    slug="TWITTER_CREATION_OF_A_POST",
-                    arguments={"text": text, "media_media_ids": [str(media_id)]},
-                    user_id=user_id,
-                    dangerously_skip_version_check=True,
-                )
+            if upload_result.get("successful"):
+                media_data = upload_result.get("data", {}).get("data", {})
+                media_id = media_data.get("id")
 
-                if result.get("successful"):
-                    tweet_id = result.get("data", {}).get("data", {}).get("id", "")
-                    return f"✅ Successfully posted to Twitter with image! Tweet ID: {tweet_id}"
-                else:
-                    error = result.get("data", {}).get(
-                        "message", result.get("error", "Unknown error")
+                if media_id:
+                    # Post with media_id
+                    result = client.tools.execute(
+                        slug="TWITTER_CREATION_OF_A_POST",
+                        arguments={"text": text, "media_media_ids": [str(media_id)]},
+                        user_id=user_id,
+                        dangerously_skip_version_check=True,
                     )
-                    return f"❌ Twitter error: {error}"
-            else:
-                # Fallback to text-only
-                result = client.tools.execute(
-                    slug="TWITTER_CREATION_OF_A_POST",
-                    arguments={"text": text},
-                    user_id=user_id,
-                    dangerously_skip_version_check=True,
-                )
-                return f"⚠️ Image upload failed, posted text only. Tweet ID: {result.get('data', {}).get('data', {}).get('id', '')}"
+
+                    if result.get("successful"):
+                        tweet_id = result.get("data", {}).get("data", {}).get("id", "")
+                        return f"✅ Successfully posted to Twitter with image! Tweet ID: {tweet_id}"
+                    else:
+                        error = result.get("data", {}).get(
+                            "message", result.get("error", "Unknown error")
+                        )
+                        return f"❌ Twitter error: {error}"
+
+            # Fallback to text-only
+            result = client.tools.execute(
+                slug="TWITTER_CREATION_OF_A_POST",
+                arguments={"text": text},
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
+            tweet_id = result.get("data", {}).get("data", {}).get("id", "")
+            return f"⚠️ Image upload failed, posted text only. Tweet ID: {tweet_id}"
         else:
             # Text-only post
             result = client.tools.execute(
@@ -99,14 +123,79 @@ def post_to_twitter(user_id: str, text: str, image_path: Optional[str] = None) -
         return f"❌ Twitter posting failed: {str(e)}"
 
 
-def post_to_facebook(
-    user_id: str, page_id: str, message: str, image_path: Optional[str] = None
-) -> str:
-    """Post to Facebook Page with optional image."""
+@tool
+def get_facebook_page_id() -> str:
+    """Get the default Facebook Page ID for posting. Returns the first managed page."""
+    user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
+    try:
+        client = get_composio_client()
+
+        result = client.tools.execute(
+            slug="FACEBOOK_LIST_MANAGED_PAGES",
+            arguments={"user_id": "me", "limit": 1, "fields": "id,name"},
+            user_id=user_id,
+            dangerously_skip_version_check=True,
+        )
+
+        if result.get("successful"):
+            data = result.get("data", {}).get("data", [])
+            if isinstance(data, list) and data:
+                page = data[0]
+                return json.dumps(
+                    {"page_id": page.get("id"), "page_name": page.get("name")}
+                )
+
+            response_data = result.get("data", {}).get("response", {}).get("data", {})
+            pages = response_data.get("data", [])
+            if pages:
+                page = pages[0]
+                return json.dumps(
+                    {"page_id": page.get("id"), "page_name": page.get("name")}
+                )
+
+        return "❌ Error: Could not find Facebook page"
+
+    except Exception as e:
+        return f"❌ Error fetching Facebook page: {str(e)}"
+
+
+@tool
+def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
+    """Post to Facebook Page with optional image. Use this when user wants to post to Facebook.
+
+    Args:
+        message: The post content/caption
+        image_path: Optional path to image file to attach
+    """
+    user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
     try:
         client = get_composio_client()
     except Exception as e:
         return f"❌ Error: Invalid COMPOSIO_API_KEY. {str(e)}"
+
+    # Get page ID first
+    page_result = client.tools.execute(
+        slug="FACEBOOK_LIST_MANAGED_PAGES",
+        arguments={"user_id": "me", "limit": 1, "fields": "id,name"},
+        user_id=user_id,
+        dangerously_skip_version_check=True,
+    )
+
+    page_id = None
+    if page_result.get("successful"):
+        data = page_result.get("data", {}).get("data", [])
+        if isinstance(data, list) and data:
+            page_id = data[0].get("id")
+        else:
+            response_data = (
+                page_result.get("data", {}).get("response", {}).get("data", {})
+            )
+            pages = response_data.get("data", [])
+            if pages:
+                page_id = pages[0].get("id")
+
+    if not page_id:
+        return "❌ Error: Could not find Facebook page ID"
 
     try:
         if image_path and os.path.exists(image_path):
@@ -153,78 +242,48 @@ def post_to_facebook(
         return f"❌ Facebook posting failed: {str(e)}"
 
 
-def get_facebook_pages(user_id: str) -> List[dict]:
-    """Get list of Facebook pages managed by the user."""
-    try:
-        client = get_composio_client()
-
-        result = client.tools.execute(
-            slug="FACEBOOK_LIST_MANAGED_PAGES",
-            arguments={"user_id": "me", "limit": 10, "fields": "id,name"},
-            user_id=user_id,
-            dangerously_skip_version_check=True,
-        )
-
-        if result.get("successful"):
-            data = result.get("data", {}).get("data", [])
-            if isinstance(data, list):
-                return data
-            # Try alternative path
-            response_data = result.get("data", {}).get("response", {}).get("data", {})
-            return response_data.get("data", [])
-        return []
-
-    except Exception as e:
-        print(f"Error fetching Facebook pages: {e}")
-        return []
-
-
-def get_social_media_tools(user_id: str) -> List[Any]:
-    """
-    Get native LangChain tools for social media platforms using Tool Router.
+@tool
+def post_to_all_platforms(
+    text: str, platforms: str = "twitter,facebook", image_path: Optional[str] = None
+) -> str:
+    """Post to multiple social media platforms simultaneously.
 
     Args:
-        user_id: The entity ID (user) to bind the tools to.
+        text: The post content
+        platforms: Comma-separated list - "twitter", "facebook", or "twitter,facebook"
+        image_path: Optional image path to attach to posts
+    """
+    results = []
+    platform_list = [p.strip().lower() for p in platforms.split(",")]
+
+    if "twitter" in platform_list:
+        result = post_to_twitter.invoke({"text": text, "image_path": image_path})
+        results.append(f"Twitter: {result}")
+
+    if "facebook" in platform_list:
+        result = post_to_facebook.invoke({"message": text, "image_path": image_path})
+        results.append(f"Facebook: {result}")
+
+    return "\n\n".join(results)
+
+
+def get_social_media_tools(user_id: str = None) -> List[Any]:
+    """
+    Get LangChain tools for social media posting.
+
+    Args:
+        user_id: Optional user_id (not used, uses default session)
 
     Returns:
         List of LangChain tools for Twitter, Facebook, and Instagram.
     """
-    try:
-        api_key = os.environ.get("COMPOSIO_API_KEY")
-        if not api_key:
-            raise ValueError("COMPOSIO_API_KEY environment variable is required")
-
-        client = Composio(api_key=api_key)
-
-        session = client.create(
-            user_id=user_id, toolkits=["twitter", "facebook", "instagram"]
-        )
-
-        tools = session.tools()
-
-        print(f"DEBUG: Successfully loaded {len(tools)} tools.")
-
-        for i, t in enumerate(tools[:10]):
-            tool_name = "unknown"
-            if hasattr(t, "name"):
-                tool_name = t.name
-            elif hasattr(t, "function") and isinstance(t.function, dict):
-                tool_name = t.function.get("name", "unknown")
-            elif isinstance(t, dict) and "function" in t:
-                tool_name = t["function"].get("name", "unknown")
-            print(f"  Tool {i + 1}: {tool_name}")
-
-        if len(tools) > 10:
-            print(f"  ... and {len(tools) - 10} more tools")
-
-        return tools
-
-    except Exception as e:
-        print(f"ERROR: Failed to load social media tools: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return []
+    return [
+        post_to_twitter,
+        post_to_facebook,
+        post_to_all_platforms,
+        get_facebook_page_id,
+        upload_media_to_twitter,
+    ]
 
 
 # Export
@@ -233,6 +292,7 @@ __all__ = [
     "upload_media_to_twitter",
     "post_to_twitter",
     "post_to_facebook",
-    "get_facebook_pages",
+    "post_to_all_platforms",
+    "get_facebook_page_id",
     "get_social_media_tools",
 ]
