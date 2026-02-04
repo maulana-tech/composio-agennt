@@ -795,6 +795,41 @@ def get_agent_tools(user_id: str):
         upload_media_to_twitter,
     ]
 
+    # Strategy Diagram Tools
+    from server.tools.strategy_diagram_agent import (
+        create_strategy_diagram,
+        analyze_strategic_prompt,
+        generate_mermaid_diagram,
+        generate_graphviz_diagram,
+        validate_diagram_code,
+    )
+
+    strategy_tools = [
+        create_strategy_diagram,
+        analyze_strategic_prompt,
+        generate_mermaid_diagram,
+        generate_graphviz_diagram,
+        validate_diagram_code,
+    ]
+
+    return (
+        serper_tools
+        + search_tools
+        + [generate_pdf_report_wrapped]
+        + quote_tools
+        + social_media_tools
+        + strategy_tools
+        + gmail_tools
+    )
+
+    social_media_tools = [
+        post_to_twitter,
+        post_to_facebook,
+        post_to_all_platforms,
+        get_facebook_page_id,
+        upload_media_to_twitter,
+    ]
+
     return (
         serper_tools
         + search_tools
