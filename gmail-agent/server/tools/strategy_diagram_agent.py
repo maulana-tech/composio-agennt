@@ -7,6 +7,7 @@ Provides real-time logging of agent progress.
 import os
 import json
 import re
+import httpx
 from typing import Optional, AsyncGenerator
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
@@ -40,64 +41,45 @@ def get_llm():
 
 def clean_json_response(text: str) -> str:
     """Clean JSON response from LLM."""
-    # Remove prefixes like "Here's JSON:", "Here is:", etc.
     text = re.sub(
         r"^(?:Here\'s?|Here is|Below is|Ini adalah|Berikut adalah)[\s:\-]*",
         "",
         text,
         flags=re.IGNORECASE,
     )
-
-    # Remove markdown code blocks
     text = re.sub(r"^```json?\s*", "", text, flags=re.MULTILINE)
     text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
-
-    # Remove markdown code blocks inline
     text = re.sub(r"`([^`]+)`", r"\1", text)
-
-    # Clean whitespace
     text = text.strip()
-
     return text
 
 
 def clean_mermaid_response(text: str) -> str:
     """Clean Mermaid response from LLM."""
-    # Remove prefixes
     text = re.sub(
         r"^(?:Here\'s?|Here is|Mermaid code|Below is|Inilah)[\s:\-]*",
         "",
         text,
         flags=re.IGNORECASE,
     )
-
-    # Remove markdown code blocks
     text = re.sub(r"^```mermaid\s*", "", text, flags=re.MULTILINE)
     text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE)
-
-    # Remove explanations after code
     lines = text.split("\n")
     clean_lines = []
     for line in lines:
-        # Skip lines with explanations
         if any(
             x in line.lower()
             for x in ["this code", "generates", "creates", "shows", "example:", "note:"]
         ):
             break
         clean_lines.append(line)
-
     text = "\n".join(clean_lines).strip()
-
-    # Ensure it starts with graph
     if not text.lower().startswith("graph") and not text.lower().startswith("sequence"):
-        # Try to find graph in text
         match = re.search(r"(graph\s+[A-Z]+.*)", text, re.DOTALL | re.IGNORECASE)
         if match:
             text = match.group(1)
         else:
             text = "graph LR\n" + text
-
     return text
 
 
@@ -119,21 +101,16 @@ Return ONLY JSON:
 
     try:
         response = llm.invoke(analysis_prompt)
-        content = clean_json_response(response.content)
+        content = clean_json_response(str(response.content))
 
-        # Try to extract JSON from the response
-        # Find JSON object in text
         start = content.find("{")
         end = content.rfind("}") + 1
         if start != -1 and end > 0:
             content = content[start:end]
 
-        # Validate it's JSON
-        json.loads(content)  # This will raise if invalid
-
+        json.loads(content)
         return content
     except Exception as e:
-        # Return fallback JSON
         fallback = {
             "stakeholders": ["Stakeholder 1", "Stakeholder 2"],
             "relationships": ["coordination"],
@@ -179,7 +156,7 @@ Generate now:
 
     try:
         response = llm.invoke(diagram_prompt)
-        content = clean_mermaid_response(response.content)
+        content = clean_mermaid_response(str(response.content))
         return content
     except Exception as e:
         return "%% Error: " + str(e)
@@ -220,21 +197,13 @@ Generate now:
 
     try:
         response = llm.invoke(dot_prompt)
-        content = response.content.strip()
-
-        # Clean
+        content = str(response.content).strip()
         content = re.sub(r"^```dot\s*", "", content)
         content = re.sub(r"\s*```$", "", content)
-        content = re.sub(
-            r"^(?:Here\'s?|Here is|DOT code)[\s:\-]*", "", content, flags=re.IGNORECASE
-        )
-
-        # Ensure it starts with digraph or graph
         if not content.lower().startswith("digraph") and not content.lower().startswith(
             "graph"
         ):
             content = "digraph G {\n" + content + "\n}"
-
         return content
     except Exception as e:
         return "// Error: " + str(e)
@@ -257,8 +226,6 @@ def validate_diagram_code(diagram_code: str, format_type: str = "mermaid") -> st
             and "sequence" not in diagram_code.lower()
         ):
             errors.append("Missing graph or sequenceDiagram declaration")
-
-        # Count nodes
         nodes = len(re.findall(r"[A-Z]\[[^\]]+\]|\{[A-Z][^\}]+\}", diagram_code))
         if nodes < 2:
             suggestions.append("Consider adding more nodes for clarity")
@@ -304,7 +271,6 @@ def create_strategy_diagram(
     }
 
     try:
-        # Step 1: Analyze prompt
         result["steps"].append(
             {
                 "type": "log",
@@ -326,7 +292,6 @@ def create_strategy_diagram(
 
         result["progress"]["analyzing"] = 100
 
-        # Step 2: Generate diagram
         result["steps"].append(
             {
                 "type": "log",
@@ -348,7 +313,6 @@ def create_strategy_diagram(
         result["diagram_code"] = diagram_code
         result["progress"]["generating"] = 100
 
-        # Step 3: Validate
         result["steps"].append(
             {
                 "type": "log",
@@ -367,7 +331,6 @@ def create_strategy_diagram(
         result["validation"] = json.loads(validation)
         result["progress"]["validating"] = 100
 
-        # Complete
         result["status"] = "completed"
         result["steps"].append(
             {
@@ -417,6 +380,106 @@ def preview_mermaid_diagram(diagram_code: str) -> str:
         return json.dumps(preview_info)
     except Exception as e:
         return json.dumps({"valid": False, "error": str(e)})
+
+
+@tool
+def convert_mermaid_to_image(
+    diagram_code: str,
+    output_format: str = "png",
+    theme: str = "default",
+) -> str:
+    """Convert Mermaid diagram to image using online API.
+
+    Args:
+        diagram_code: The Mermaid diagram code (without markdown blocks)
+        output_format: "png" or "svg"
+        theme: Mermaid theme - "default", "dark", "forest", "neutral"
+
+    Returns:
+        JSON string with image URL or error
+    """
+    try:
+        clean_code = diagram_code.strip()
+        clean_code = re.sub(r"^```mermaid\s*", "", clean_code)
+        clean_code = re.sub(r"\s*```$", "", clean_code)
+
+        encoded_code = (
+            clean_code.replace("\n", "%0A").replace(" ", "%20").replace("'", "%27")
+        )
+
+        base_url = "https://mermaid.ink"
+
+        if output_format == "svg":
+            url = f"{base_url}/svg/{encoded_code}"
+            if theme != "default":
+                url += f"?theme={theme}"
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "format": "svg",
+                    "url": url,
+                    "direct_url": f"{base_url}/svg/{encoded_code}",
+                    "message": "SVG image generated successfully",
+                }
+            )
+
+        url = f"{base_url}/img/{encoded_code}"
+        if theme != "default":
+            url += f"?theme={theme}"
+
+        return json.dumps(
+            {
+                "success": True,
+                "format": "png",
+                "url": url,
+                "direct_url": f"{base_url}/img/{encoded_code}",
+                "embed_code": f"![Mermaid Diagram]({url})",
+                "markdown_image": f"![Diagram]({url})",
+                "message": "PNG image generated successfully",
+            }
+        )
+
+    except Exception as e:
+        return json.dumps(
+            {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to convert diagram to image",
+                "alternative": {
+                    "mermaid_live": "https://mermaid.live/edit",
+                    "copy_code": "Copy the Mermaid code and paste into mermaid.live",
+                },
+            }
+        )
+
+
+@tool
+def render_mermaid_online(diagram_code: str) -> str:
+    """Get online rendering URLs for Mermaid diagram."""
+    clean_code = diagram_code.strip()
+    clean_code = re.sub(r"^```mermaid\s*", "", clean_code)
+    clean_code = re.sub(r"\s*```$", "", clean_code)
+    encoded_code = (
+        clean_code.replace("\n", "%0A").replace(" ", "%20").replace("'", "%27")
+    )
+
+    urls = {
+        "mermaid_live": f"https://mermaid.live/edit#code={encoded_code}",
+        "mermaid_js": f"https://mermaid-js.github.io/mermaid-live-editor/#/edit/{encoded_code}",
+        "quickchart": f"https://quickchart.io/graphviz?graph={encoded_code}"
+        if "graph" in clean_code.lower()
+        else None,
+    }
+
+    return json.dumps(
+        {
+            "success": True,
+            "rendering_urls": urls,
+            "diagram_length": len(clean_code),
+            "message": "Click URLs to view rendered diagram",
+        }
+    )
 
 
 async def generate_strategy_diagram_stream(
@@ -533,13 +596,24 @@ async def generate_strategy_diagram_stream(
             + "\n"
         )
 
-        from .strategy_diagram_agent import validate_diagram_code
+        from .strategy_diagram_agent import (
+            validate_diagram_code,
+            convert_mermaid_to_image,
+        )
 
         validation = validate_diagram_code.invoke(
             {"diagram_code": diagram_code, "format_type": format_type}
         )
         validation_data = json.loads(validation)
         is_valid = validation_data.get("valid", False)
+
+        image_result = None
+        if format_type == "mermaid" and is_valid:
+            image_data = convert_mermaid_to_image.invoke({"diagram_code": diagram_code})
+            try:
+                image_result = json.loads(image_data)
+            except:
+                pass
 
         yield (
             json.dumps(
@@ -554,6 +628,7 @@ async def generate_strategy_diagram_stream(
                         "diagram_code": diagram_code,
                         "format": format_type,
                         "validation": validation_data,
+                        "image": image_result,
                     },
                 }
             )
@@ -584,6 +659,8 @@ def get_strategy_diagram_tools():
         generate_graphviz_diagram,
         validate_diagram_code,
         preview_mermaid_diagram,
+        convert_mermaid_to_image,
+        render_mermaid_online,
     ]
 
 
@@ -594,6 +671,8 @@ __all__ = [
     "generate_graphviz_diagram",
     "validate_diagram_code",
     "preview_mermaid_diagram",
+    "convert_mermaid_to_image",
+    "render_mermaid_online",
     "generate_strategy_diagram_stream",
     "get_strategy_diagram_tools",
 ]
