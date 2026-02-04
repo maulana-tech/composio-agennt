@@ -89,7 +89,7 @@ def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
                     if result.get("successful"):
                         tweet_id = result.get("data", {}).get("data", {}).get("id", "")
                         tweet_url = f"https://twitter.com/i/status/{tweet_id}"
-                        return f"✅ Successfully posted to Twitter with image!\n\n🔗 **Link:** {tweet_url}"
+                        return f"✅ Successfully posted to Twitter with image!\n\n📸 Image attached\n🔗 **Link:** {tweet_url}"
                     else:
                         error = result.get("data", {}).get(
                             "message", result.get("error", "Unknown error")
@@ -283,7 +283,7 @@ def post_to_all_platforms(
     return "\n\n".join(results)
 
 
-def get_social_media_tools(user_id: str = None) -> List[Any]:
+def get_social_media_tools(user_id: str = "default") -> List[Any]:
     """
     Get LangChain tools for social media posting.
 
