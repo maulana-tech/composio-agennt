@@ -271,14 +271,13 @@ def create_app() -> FastAPI:
         try:
             toolkits = ["twitter", "facebook", "instagram"]
             status = check_toolkits_status(composio_client, user_id, toolkits)
-            
+
             return {
                 "user_id": user_id,
                 "toolkits": status,
                 "summary": {
-                    toolkit: info["connected"]
-                    for toolkit, info in status.items()
-                }
+                    toolkit: info["connected"] for toolkit, info in status.items()
+                },
             }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -661,11 +660,12 @@ def create_app() -> FastAPI:
     @app.post("/social-media/post")
     async def post_to_social_media(request: dict, composio_client: ComposioClient):
         """
-        Post image to social media platforms.
+        Post image to social media platforms with real-time progress.
         """
         try:
-            # Validate required fields
-            user_id = request.get("user_id", "default")
+            user_id = request.get(
+                "user_id", "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
+            )
             platform = request.get("platform")
             image_path = request.get("image_path")
             caption = request.get("caption", "")
@@ -675,27 +675,103 @@ def create_app() -> FastAPI:
             if not image_path:
                 raise HTTPException(status_code=400, detail="Image path is required")
 
-            # Import social media functions directly
-            from .tools.social_media_poster import (
-                post_to_twitter_correct,
-                post_to_facebook_correct,
-            )
+            from .tools.social_media_poster import post_to_twitter, post_to_facebook
 
-            # Execute based on platform
             if platform.lower() == "twitter":
-                result = post_to_twitter_correct(user_id, image_path, caption)
+                result = post_to_twitter.invoke(
+                    {"text": caption, "image_path": image_path}
+                )
             elif platform.lower() == "facebook":
-                result = post_to_facebook_correct(user_id, image_path, caption)
+                result = post_to_facebook.invoke(
+                    {"message": caption, "image_path": image_path}
+                )
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported platform: {platform}. Use: twitter, facebook, instagram, all",
+                    detail=f"Unsupported platform: {platform}. Use: twitter, facebook",
                 )
 
             return {"success": True, "platform": platform, "result": result}
 
         except HTTPException:
             raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ========== Strategy Diagram Endpoints ==========
+
+    @app.post("/strategy-diagram/generate")
+    async def generate_strategy_diagram(request: dict):
+        """
+        Generate strategy diagram from prompt with real-time progress streaming.
+        """
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+        prompt = request.get("prompt")
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+
+        format_type = request.get("format_type", "mermaid")
+        style = request.get("style", "professional")
+
+        async def stream_strategy_diagram():
+            from .tools.strategy_diagram_agent import generate_strategy_diagram_stream
+
+            async for chunk in generate_strategy_diagram_stream(
+                prompt=prompt,
+                groq_api_key=groq_api_key,
+                format_type=format_type,
+                style=style,
+            ):
+                yield chunk
+
+        return StreamingResponse(
+            stream_strategy_diagram(), media_type="application/x-ndjson"
+        )
+
+    @app.post("/strategy-diagram/analyze")
+    async def analyze_strategy_prompt(request: dict):
+        """
+        Analyze strategy prompt without generating diagram.
+        """
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not configured")
+
+        prompt = request.get("prompt")
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+
+        try:
+            from .tools.strategy_diagram_agent import analyze_strategic_prompt
+
+            result = analyze_strategic_prompt.invoke({"prompt": prompt})
+            return {"success": True, "analysis": result}
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/strategy-diagram/validate")
+    async def validate_diagram(request: dict):
+        """
+        Validate diagram code and return suggestions.
+        """
+        diagram_code = request.get("diagram_code")
+        format_type = request.get("format_type", "mermaid")
+
+        if not diagram_code:
+            raise HTTPException(status_code=400, detail="Diagram code is required")
+
+        try:
+            from .tools.strategy_diagram_agent import validate_diagram_code
+
+            result = validate_diagram_code.invoke(
+                {"diagram_code": diagram_code, "format_type": format_type}
+            )
+            return {"success": True, "validation": result}
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
