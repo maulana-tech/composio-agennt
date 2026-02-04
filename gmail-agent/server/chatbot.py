@@ -779,7 +779,21 @@ def get_agent_tools(user_id: str):
     ]
 
     # Social Media Tools (Verified Native Approach)
-    social_media_tools = get_social_media_tools(user_id)
+    from server.tools.social_media_poster import (
+        post_to_twitter,
+        post_to_facebook,
+        post_to_all_platforms,
+        get_facebook_page_id,
+        upload_media_to_twitter,
+    )
+
+    social_media_tools = [
+        post_to_twitter,
+        post_to_facebook,
+        post_to_all_platforms,
+        get_facebook_page_id,
+        upload_media_to_twitter,
+    ]
 
     return (
         serper_tools
@@ -832,42 +846,36 @@ You can directly post quote images to social media platforms using Composio inte
 3. Return confirmation with post details/URL
 
 **Available Social Media Tools:**
-The agent has direct access to social media tools for Twitter, Facebook, and Instagram:
+The agent has direct access to social media tools for Twitter and Facebook:
 
-- **Facebook Tools**:
-  - `FACEBOOK_CREATE_PHOTO_POST` - Post photo with caption to Facebook Page
-    - Parameters: `page_id`, `message`, `url` (image URL) or `photo` (local file path)
-  - `FACEBOOK_CREATE_POST` - Post text only to Facebook Page
-    - Parameters: `page_id`, `message`
-  
-- **Twitter/X Tools**:
-  - `TWITTER_CREATE_TWEET_WITH_MEDIA` - Create tweet with image/video
-    - Parameters: `text` (tweet content), `media` (local file path or URL)
-    - Example: `{"text": "Tweet text", "media": "/path/to/image.jpg"}`
-  - `TWITTER_CREATION_OF_A_POST` - Create text-only tweet
-    - Parameters: `text` (tweet content)
-  - **Note**: Composio handles file upload automatically - just provide file path or URL
-  
-- **Instagram Tools**:
-  - Available through Instagram Business account connected to Facebook Page
-  - Similar media parameter support (local path or URL)
-  
-- **Meta Tools** (for advanced usage):
-  - `COMPOSIO_SEARCH_TOOLS` - Search for specific tools if needed
-  - `COMPOSIO_MULTI_EXECUTE_TOOL` - Execute multiple tools in parallel
+- **post_to_twitter(text, image_path)**: Post to Twitter/X
+  - text: The tweet content (max 280 characters)
+  - image_path: Optional path to image file
+  - Handles media upload automatically
 
-**Media Upload Guidelines:**
-- **Local Files**: Pass absolute file path (e.g., from `generate_quote_image` tool output)
-- **URLs**: Pass image URL directly
-- **Automatic Handling**: Composio SDK uploads files automatically - no manual upload step needed
-- **Supported Formats**: Images (JPG, PNG), Videos (MP4)
+- **post_to_facebook(message, image_path)**: Post to Facebook Page
+  - message: The post content/caption
+  - image_path: Optional path to image file
+  - Uses default connected Facebook Page
+
+- **post_to_all_platforms(text, platforms, image_path)**: Post to multiple platforms
+  - text: Post content for all platforms
+  - platforms: "twitter", "facebook", or "twitter,facebook"
+  - image_path: Optional image path
+
+- **get_facebook_page_id()**: Get the default Facebook Page ID
+
+- **upload_media_to_twitter(image_path)**: Upload media to Twitter first (optional - usually handled automatically)
 
 **Important Notes:**
 - Facebook only supports Facebook Pages, not personal accounts
 - All tools require OAuth connections configured in Composio
-- Instagram requires Business/Creator accounts connected to Facebook Page
-- Always validate image exists before attempting to post
+- Twitter handles media upload automatically when image_path is provided
 - Respect platform character limits and content policies
+
+**Media Upload Guidelines:**
+- Pass absolute file path for images (e.g., from `generate_quote_image` tool output)
+- Supported Formats: Images (JPG, PNG)
 
 ### 1.7. Intelligent Search Decision (CRITICAL)
 You must intelligently decide when web search is NEEDED vs when you can answer from your training data:
@@ -1264,10 +1272,11 @@ Always confirm success after sending email (format: "✅ Email berhasil dikirim 
 - generate_pdf_report_wrapped(markdown_content, filename, sender_email) → Returns ABSOLUTE FILE PATH
 - gmail_send_email(recipient_email, subject, body, attachment) → Send email
 - gmail_fetch_emails: Retrieve email context
-- post_quote_to_twitter(image_path, caption) → Post to Twitter/X
-- post_quote_to_facebook(image_path, caption) → Post to Facebook Page
-- post_quote_to_instagram(image_path, caption) → Post to Instagram
-- post_quote_to_all_platforms(image_path, caption, platforms) → Post to multiple platforms
+- post_to_twitter(text, image_path) → Post to Twitter/X (image optional)
+- post_to_facebook(message, image_path) → Post to Facebook Page (image optional)
+- post_to_all_platforms(text, platforms, image_path) → Post to multiple platforms
+- get_facebook_page_id: Get default Facebook Page ID
+- upload_media_to_twitter(image_path): Upload media to Twitter first
 
 ## CRITICAL RULES:
 1. NEVER hallucinate - only report verified information
