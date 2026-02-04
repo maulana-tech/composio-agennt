@@ -258,6 +258,48 @@ def create_app() -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    # ========== Tool Router Authentication Endpoints ==========
+
+    @app.get("/toolkits/{user_id}/status")
+    def get_toolkits_status(user_id: str, composio_client: ComposioClient):
+        """
+        Check connection status for all social media toolkits using Tool Router.
+        Returns status for Twitter, Facebook, and Instagram.
+        """
+        from .auth import check_toolkits_status
+
+        try:
+            toolkits = ["twitter", "facebook", "instagram"]
+            status = check_toolkits_status(composio_client, user_id, toolkits)
+            
+            return {
+                "user_id": user_id,
+                "toolkits": status,
+                "summary": {
+                    toolkit: info["connected"]
+                    for toolkit, info in status.items()
+                }
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/toolkits/{user_id}/authorize/{toolkit}")
+    def authorize_toolkit_endpoint(
+        user_id: str, toolkit: str, composio_client: ComposioClient
+    ):
+        """
+        Authorize a toolkit using Tool Router session.authorize() method.
+        Toolkit: twitter, facebook, instagram, gmail, etc.
+        Returns redirect URL for OAuth flow.
+        """
+        from .auth import authorize_toolkit
+
+        try:
+            result = authorize_toolkit(composio_client, user_id, toolkit.lower())
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     def validate_user(user_id: str, composio_client) -> str:
         if check_connected_account_exists(composio_client, user_id):
             return user_id
