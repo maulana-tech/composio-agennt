@@ -60,7 +60,7 @@ class ErrorResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    user_id: str = Field(default="default")
+    user_id: str = Field(default="pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58")
     auto_execute: bool = Field(default=True)
     conversation_history: Optional[List[dict]] = None
     session_id: Optional[str] = None
