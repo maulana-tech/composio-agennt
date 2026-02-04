@@ -4,7 +4,7 @@ langchain-groq
 langchain-google-genai
 langchain-core
 langgraph
-tavily-python
+
 composio-langchain>=0.11.0
 composio-core>=0.7.21
 composio-client>=1.27.0

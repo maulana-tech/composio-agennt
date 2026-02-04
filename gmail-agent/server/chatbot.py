@@ -9,7 +9,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from tavily import TavilyClient
 from composio_langchain import LangchainProvider
 from composio import Composio
 
@@ -122,147 +121,264 @@ def convert_history(history: List[Dict]) -> List[BaseMessage]:
     return messages
 
 
-def create_tavily_tools():
-    """Create Tavily tools for search, extract, crawl, and map."""
+def create_serper_tools():
+    """Create Serper tools for superior Google Search-based web search."""
 
-    tavily_api_key = os.environ.get("TAVILY_API_KEY")
-    tavily_client = TavilyClient(api_key=tavily_api_key)
+    serper_api_key = os.environ.get("SERPER_API_KEY")
+    if not serper_api_key:
+        print("Warning: SERPER_API_KEY not found. Serper tools will not work.")
 
     @tool
-    def tavily_search(query: str, max_results: int = 5) -> str:
+    def serper_search(query: str, num_results: int = 10) -> str:
         """
-        Search the web using Tavily Search API.
+        Search the web using Serper (Google Search API) for superior, relevant results.
 
         Args:
-            query: The search query (be specific and detailed)
-            max_results: Maximum number of results to return (1-10)
+            query: The search query (be specific and detailed for best results)
+            num_results: Maximum number of results to return (1-20)
 
         Returns:
-            Search results with titles, URLs, content snippets, and an AI-generated answer
+            Search results with titles, URLs, content snippets, and rich Google search results
         """
+        if not serper_api_key:
+            return "Error: SERPER_API_KEY not configured. Please set SERPER_API_KEY environment variable."
+
         try:
-            result = tavily_client.search(
-                query=query,
-                search_depth="advanced",
-                max_results=min(max_results, 10),
-                include_answer=True,
-            )
+            url = "https://google.serper.dev/search"
+            headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+            payload = {
+                "q": query,
+                "num": min(num_results, 20),
+                "autocorrect": True,
+                "type": "search",
+            }
+
+            response = httpx.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
             output = []
-            if result.get("answer"):
-                output.append(f"**Summary:** {result['answer']}\n")
 
-            output.append(f"**Found {len(result.get('results', []))} results:**\n")
+            # Add answer box if available
+            if "answerBox" in data:
+                answer_box = data["answerBox"]
+                if "answer" in answer_box:
+                    output.append(f"**Quick Answer:** {answer_box['answer']}")
+                elif "snippet" in answer_box:
+                    output.append(f"**Quick Answer:** {answer_box['snippet']}")
+                output.append("")
 
-            for i, r in enumerate(result.get("results", []), 1):
-                title = r.get("title", "No title")
-                url = r.get("url", "")
-                content = r.get("content", "No content")[:400]
-                # Format as clickable markdown link
-                output.append(f"\n{i}. [{title}]({url})")
-                output.append(f"   {content}...")
+            # Add knowledge graph if available
+            if "knowledgeGraph" in data:
+                kg = data["knowledgeGraph"]
+                output.append(f"**Knowledge Graph:** {kg.get('title', 'No title')}")
+                if "description" in kg:
+                    output.append(kg["description"])
+                output.append("")
+
+            # Add organic results
+            output.append(f"**Found {len(data.get('organic', []))} organic results:**")
+
+            for i, result in enumerate(data.get("organic", []), 1):
+                title = result.get("title", "No title")
+                link = result.get("link", "")
+                snippet = result.get("snippet", "No description")
+
+                # Truncate snippet if too long
+                if len(snippet) > 300:
+                    snippet = snippet[:300] + "..."
+
+                output.append(f"\n{i}. **{title}**")
+                output.append(f"   {link}")
+                output.append(f"   {snippet}")
+
+                # Add sitelinks if available
+                if "sitelinks" in result:
+                    for sitelink in result["sitelinks"][:2]:  # Limit to 2 sitelinks
+                        sitelink_title = sitelink.get("title", "")
+                        sitelink_link = sitelink.get("link", "")
+                        if sitelink_title and sitelink_link:
+                            output.append(f"   → {sitelink_title}: {sitelink_link}")
+
+            # Add related searches if available
+            if "relatedSearches" in data:
+                output.append(f"\n**Related Searches:**")
+                for search in data["relatedSearches"][
+                    :5
+                ]:  # Limit to 5 related searches
+                    output.append(f"• {search}")
 
             return "\n".join(output)
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                return "Error: Invalid SERPER_API_KEY. Please check your API key."
+            elif e.response.status_code == 429:
+                return "Error: Rate limit exceeded. Please try again later."
+            else:
+                return f"Search error: HTTP {e.response.status_code} - {str(e)}"
         except Exception as e:
             return f"Search error: {str(e)}"
 
     @tool
-    def tavily_extract(urls: str) -> str:
+    def serper_news_search(query: str, num_results: int = 10) -> str:
         """
-        Extract full content from one or more URLs.
+        Search for recent news using Serper News API for current events and breaking news.
 
         Args:
-            urls: Comma-separated list of URLs to extract content from (e.g., "https://example.com,https://other.com")
+            query: The news search query
+            num_results: Maximum number of news results to return (1-20)
 
         Returns:
-            Extracted raw content from the URLs in markdown format
+            Recent news articles with titles, URLs, dates, and sources
         """
-        try:
-            url_list = [u.strip() for u in urls.split(",") if u.strip()]
-            if not url_list:
-                return "Error: No valid URLs provided"
+        if not serper_api_key:
+            return "Error: SERPER_API_KEY not configured. Please set SERPER_API_KEY environment variable."
 
-            result = tavily_client.extract(urls=url_list)
+        try:
+            url = "https://google.serper.dev/news"
+            headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+            payload = {"q": query, "num": min(num_results, 20)}
+
+            response = httpx.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
             output = []
+            output.append(f"**Recent News Results for: '{query}'**")
+            output.append("")
 
-            for r in result.get("results", []):
-                output.append(f"\n## Content from: {r.get('url', 'Unknown URL')}\n")
-                content = r.get("raw_content", "No content extracted")
-                if len(content) > 3000:
-                    content = content[:3000] + "...[truncated]"
-                output.append(content)
+            news_results = data.get("news", [])
+            if not news_results:
+                output.append("No recent news found for this query.")
+                return "\n".join(output)
 
-            if result.get("failed_results"):
-                output.append("\n**Failed extractions:**")
-                for f in result["failed_results"]:
-                    output.append(f"- {f.get('url')}: {f.get('error')}")
+            for i, news in enumerate(news_results, 1):
+                title = news.get("title", "No title")
+                link = news.get("link", "")
+                snippet = news.get("snippet", "No description")
+                date = news.get("date", "Date not available")
+                source = news.get("source", "Unknown source")
+
+                # Truncate snippet
+                if len(snippet) > 250:
+                    snippet = snippet[:250] + "..."
+
+                output.append(f"\n{i}. **{title}**")
+                output.append(f"   📅 {date} | 📰 {source}")
+                output.append(f"   {link}")
+                output.append(f"   {snippet}")
 
             return "\n".join(output)
+
         except Exception as e:
-            return f"Extract error: {str(e)}"
+            return f"News search error: {str(e)}"
 
     @tool
-    def tavily_crawl(url: str, limit: int = 10) -> str:
+    def serper_images_search(query: str, num_results: int = 10) -> str:
         """
-        Crawl a website starting from a base URL to extract content from multiple pages.
+        Search for images using Serper Images API.
 
         Args:
-            url: The root URL to begin the crawl (e.g., "https://docs.example.com")
-            limit: Maximum number of pages to crawl (1-20)
+            query: The image search query
+            num_results: Maximum number of image results to return (1-20)
 
         Returns:
-            Crawled content from discovered pages
+            Image search results with titles, URLs, and thumbnail links
         """
+        if not serper_api_key:
+            return "Error: SERPER_API_KEY not configured. Please set SERPER_API_KEY environment variable."
+
         try:
-            result = tavily_client.crawl(
-                url=url, max_depth=2, max_breadth=10, limit=min(limit, 20)
-            )
+            url = "https://google.serper.dev/images"
+            headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+            payload = {"q": query, "num": min(num_results, 20)}
 
-            output = [f"**Crawl Results for:** {result.get('base_url', url)}\n"]
-            output.append(f"**Pages crawled:** {len(result.get('results', []))}\n")
+            response = httpx.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
-            for i, r in enumerate(result.get("results", []), 1):
-                output.append(f"\n### {i}. {r.get('url', 'Unknown URL')}")
-                content = r.get("raw_content", "No content")
-                if len(content) > 1000:
-                    content = content[:1000] + "...[truncated]"
-                output.append(content)
+            output = []
+            output.append(f"**Image Search Results for: '{query}'**")
+            output.append("")
+
+            image_results = data.get("images", [])
+            if not image_results:
+                output.append("No images found for this query.")
+                return "\n".join(output)
+
+            for i, image in enumerate(image_results, 1):
+                title = image.get("title", "No title")
+                link = image.get("link", "")
+                thumbnail = image.get("thumbnailUrl", "")
+                width = image.get("imageWidth", "N/A")
+                height = image.get("imageHeight", "N/A")
+
+                output.append(f"\n{i}. **{title}**")
+                output.append(f"   🔗 [Full Image]({link})")
+                if thumbnail:
+                    output.append(f"   🖼️ [Thumbnail]({thumbnail})")
+                output.append(f"   📐 Size: {width}x{height}")
 
             return "\n".join(output)
+
         except Exception as e:
-            return f"Crawl error: {str(e)}"
+            return f"Image search error: {str(e)}"
 
     @tool
-    def tavily_map(url: str, limit: int = 30) -> str:
+    def serper_videos_search(query: str, num_results: int = 10) -> str:
         """
-        Discover all URLs from a website (like a sitemap).
+        Search for videos using Serper Videos API.
 
         Args:
-            url: The root URL to begin mapping (e.g., "https://example.com")
-            limit: Maximum number of URLs to discover (1-50)
+            query: The video search query
+            num_results: Maximum number of video results to return (1-20)
 
         Returns:
-            List of discovered URLs from the website
+            Video search results with titles, URLs, and platform information
         """
+        if not serper_api_key:
+            return "Error: SERPER_API_KEY not configured. Please set SERPER_API_KEY environment variable."
+
         try:
-            result = tavily_client.map(
-                url=url, max_depth=2, max_breadth=20, limit=min(limit, 50)
-            )
+            url = "https://google.serper.dev/videos"
+            headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+            payload = {"q": query, "num": min(num_results, 20)}
 
-            urls = result.get("results", [])
-            output = [f"**Sitemap for:** {result.get('base_url', url)}\n"]
-            output.append(f"**Total URLs discovered:** {len(urls)}\n")
-            output.append("**URLs:**")
+            response = httpx.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
-            for i, discovered_url in enumerate(urls, 1):
-                output.append(f"{i}. {discovered_url}")
+            output = []
+            output.append(f"**Video Search Results for: '{query}'**")
+            output.append("")
+
+            video_results = data.get("videos", [])
+            if not video_results:
+                output.append("No videos found for this query.")
+                return "\n".join(output)
+
+            for i, video in enumerate(video_results, 1):
+                title = video.get("title", "No title")
+                link = video.get("link", "")
+                duration = video.get("duration", "Duration unknown")
+                platform = video.get("platform", "Unknown platform")
+
+                output.append(f"\n{i}. **{title}**")
+                output.append(f"   🎬 {platform} | ⏱️ {duration}")
+                output.append(f"   🔗 {link}")
 
             return "\n".join(output)
-        except Exception as e:
-            return f"Map error: {str(e)}"
 
-    return [tavily_search, tavily_extract, tavily_crawl, tavily_map]
+        except Exception as e:
+            return f"Video search error: {str(e)}"
+
+    return [
+        serper_search,
+        serper_news_search,
+        serper_images_search,
+        serper_videos_search,
+    ]
 
 
 def create_grounding_tools():
@@ -615,7 +731,7 @@ def get_agent_tools(user_id: str):
     gmail_tools = [gmail_send_email, gmail_create_draft, gmail_fetch_emails]
 
     # Search Tools
-    tavily_tools = create_tavily_tools()
+    serper_tools = create_serper_tools()
     search_tools = create_grounding_tools()
 
     # PDF Generator
@@ -698,7 +814,8 @@ def get_agent_tools(user_id: str):
     ]
 
     return (
-        search_tools
+        serper_tools
+        + search_tools
         + [generate_pdf_report_wrapped]
         + quote_tools
         + social_media_tools
