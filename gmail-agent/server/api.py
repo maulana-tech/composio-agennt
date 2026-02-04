@@ -31,6 +31,11 @@ from .auth import (
     create_connection,
     check_connected_account_exists,
     get_connection_status,
+    check_twitter_connected,
+    check_facebook_connected,
+    check_instagram_connected,
+    get_connected_accounts,
+    create_social_connection,
 )
 from .actions import send_email, fetch_emails, create_draft
 from .chatbot import chat, chat_stream
@@ -175,6 +180,83 @@ def create_app() -> FastAPI:
             )
         except Exception as e:
             raise HTTPException(status_code=404, detail=str(e))
+
+    # ========== Social Media Connection Endpoints ==========
+
+    @app.get("/connections/{user_id}")
+    def get_user_connections(user_id: str, composio_client: ComposioClient):
+        """
+        Get all connected social media accounts for a user.
+        Returns connected accounts for Twitter, Facebook, Instagram, and Gmail.
+        """
+        try:
+            connected = get_connected_accounts(composio_client, user_id)
+            return {
+                "user_id": user_id,
+                "connections": connected,
+                "summary": {
+                    "twitter_connected": len(connected.get("TWITTER", [])) > 0,
+                    "facebook_connected": len(connected.get("FACEBOOK", [])) > 0,
+                    "instagram_connected": len(connected.get("INSTAGRAM", [])) > 0,
+                    "gmail_connected": len(connected.get("GMAIL", [])) > 0,
+                },
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/connections/{user_id}/connect/{platform}")
+    def connect_social_account(
+        user_id: str, platform: str, composio_client: ComposioClient
+    ):
+        """
+        Initiate OAuth connection for social media account.
+        Platform: TWITTER, FACEBOOK, or INSTAGRAM
+        Returns redirect URL for OAuth flow.
+        """
+        platform = platform.upper()
+        valid_platforms = ["TWITTER", "FACEBOOK", "INSTAGRAM"]
+
+        if platform not in valid_platforms:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid platform. Use: {', '.join(valid_platforms)}",
+            )
+
+        try:
+            connection = create_social_connection(composio_client, user_id, platform)
+            return {
+                "success": True,
+                "user_id": user_id,
+                "platform": platform,
+                "connection_id": connection.id,
+                "redirect_url": connection.redirect_url,
+                "message": f"Navigate to the redirect URL to complete {platform} OAuth connection",
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/connections/{user_id}/{platform}/status")
+    def check_platform_connection(
+        user_id: str, platform: str, composio_client: ComposioClient
+    ):
+        """
+        Check if a specific social media platform is connected for a user.
+        """
+        platform = platform.upper()
+
+        try:
+            if platform == "TWITTER":
+                connected = check_twitter_connected(composio_client, user_id)
+            elif platform == "FACEBOOK":
+                connected = check_facebook_connected(composio_client, user_id)
+            elif platform == "INSTAGRAM":
+                connected = check_instagram_connected(composio_client, user_id)
+            else:
+                raise HTTPException(status_code=400, detail="Invalid platform")
+
+            return {"user_id": user_id, "platform": platform, "connected": connected}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     def validate_user(user_id: str, composio_client) -> str:
         if check_connected_account_exists(composio_client, user_id):
@@ -448,14 +530,35 @@ def create_app() -> FastAPI:
             )
 
             # Extract substantive content from results
-            research_summary = results.get("stages", {}).get("research_results", {}).get("analysis", {}).get("summary", "")
+            research_summary = (
+                results.get("stages", {})
+                .get("research_results", {})
+                .get("analysis", {})
+                .get("summary", "")
+            )
             if not research_summary:
                 # Try to get findings
-                findings = results.get("stages", {}).get("research_results", {}).get("analysis", {}).get("key_findings", [])
+                findings = (
+                    results.get("stages", {})
+                    .get("research_results", {})
+                    .get("analysis", {})
+                    .get("key_findings", [])
+                )
                 if isinstance(findings, list) and findings:
-                    research_summary = "<ul>" + "".join([f"<li>{f if isinstance(f, str) else str(f)}</li>" for f in findings]) + "</ul>"
+                    research_summary = (
+                        "<ul>"
+                        + "".join(
+                            [
+                                f"<li>{f if isinstance(f, str) else str(f)}</li>"
+                                for f in findings
+                            ]
+                        )
+                        + "</ul>"
+                    )
                 else:
-                    research_summary = "Detailed analysis is available in the attached PDF report."
+                    research_summary = (
+                        "Detailed analysis is available in the attached PDF report."
+                    )
 
             # Create reply email content
             reply_subject = f"RE: {original_subject}"
@@ -510,6 +613,49 @@ def create_app() -> FastAPI:
 
         except Exception as e:
             return EmailAnalysisResponse(success=False, status="failed", error=str(e))
+
+    # ========== Social Media Endpoints ==========
+
+    @app.post("/social-media/post")
+    async def post_to_social_media(request: dict, composio_client: ComposioClient):
+        """
+        Post image to social media platforms.
+        """
+        try:
+            # Validate required fields
+            user_id = request.get("user_id", "default")
+            platform = request.get("platform")
+            image_path = request.get("image_path")
+            caption = request.get("caption", "")
+
+            if not platform:
+                raise HTTPException(status_code=400, detail="Platform is required")
+            if not image_path:
+                raise HTTPException(status_code=400, detail="Image path is required")
+
+            # Import social media functions directly
+            from .tools.social_media_poster import (
+                post_to_twitter_correct,
+                post_to_facebook_correct,
+            )
+
+            # Execute based on platform
+            if platform.lower() == "twitter":
+                result = post_to_twitter_correct(user_id, image_path, caption)
+            elif platform.lower() == "facebook":
+                result = post_to_facebook_correct(user_id, image_path, caption)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported platform: {platform}. Use: twitter, facebook, instagram, all",
+                )
+
+            return {"success": True, "platform": platform, "result": result}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     return app
 
