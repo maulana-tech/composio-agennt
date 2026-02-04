@@ -7,12 +7,31 @@ Provides real-time logging of agent progress.
 import os
 import json
 import re
-import httpx
+import base64
+import time
 from typing import Optional, AsyncGenerator
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from composio import Composio
+
+# Optional imports for Mermaid conversion
+try:
+    import mermaid as md
+    from mermaid.graph import Graph
+
+    MERMAID_AVAILABLE = True
+except ImportError:
+    MERMAID_AVAILABLE = False
+    md = None
+    Graph = None
+
+try:
+    from PIL import Image
+
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 
 def get_llm():
@@ -388,70 +407,158 @@ def convert_mermaid_to_image(
     output_format: str = "png",
     theme: str = "default",
 ) -> str:
-    """Convert Mermaid diagram to image using online API.
+    """Convert Mermaid diagram to image using mermaid-py library.
 
     Args:
-        diagram_code: The Mermaid diagram code (without markdown blocks)
+        diagram_code: The Mermaid diagram code (with or without markdown blocks)
         output_format: "png" or "svg"
         theme: Mermaid theme - "default", "dark", "forest", "neutral"
 
     Returns:
-        JSON string with image URL or error
+        JSON string with image path, base64 data, and rendering info
     """
+    if not MERMAID_AVAILABLE or md is None or Graph is None:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "mermaid-py not installed",
+                "message": "Install: pip install mermaid-py",
+                "alternative": {"mermaid_live": "https://mermaid.live/edit"},
+            }
+        )
+
     try:
         clean_code = diagram_code.strip()
         clean_code = re.sub(r"^```mermaid\s*", "", clean_code)
         clean_code = re.sub(r"\s*```$", "", clean_code)
 
-        encoded_code = (
-            clean_code.replace("\n", "%0A").replace(" ", "%20").replace("'", "%27")
+        graph = Graph("strategy-diagram", clean_code)
+        mermaid_obj = md.Mermaid(graph)
+
+        output_dir = "/tmp/mermaid_images"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(
+            output_dir, f"diagram_{int(time.time())}.{output_format}"
         )
 
-        base_url = "https://mermaid.ink"
-
         if output_format == "svg":
-            url = f"{base_url}/svg/{encoded_code}"
-            if theme != "default":
-                url += f"?theme={theme}"
+            mermaid_obj.to_svg(output_path)
+            with open(output_path, "r", encoding="utf-8") as f:
+                svg_content = f.read()
+
+            with open(output_path, "rb") as f:
+                file_size = len(f.read())
+
+            base64_svg = base64.b64encode(svg_content.encode("utf-8")).decode("utf-8")
+            data_url = f"data:image/svg+xml;base64,{base64_svg}"
 
             return json.dumps(
                 {
                     "success": True,
                     "format": "svg",
-                    "url": url,
-                    "direct_url": f"{base_url}/svg/{encoded_code}",
-                    "message": "SVG image generated successfully",
+                    "path": output_path,
+                    "file_size": file_size,
+                    "data_url": data_url,
+                    "base64": base64_svg,
+                    "message": f"SVG saved to {output_path}",
                 }
             )
 
-        url = f"{base_url}/img/{encoded_code}"
-        if theme != "default":
-            url += f"?theme={theme}"
+        else:
+            mermaid_obj.to_png(output_path)
 
+            with open(output_path, "rb") as f:
+                png_bytes = f.read()
+                file_size = len(png_bytes)
+
+            base64_png = base64.b64encode(png_bytes).decode("utf-8")
+            data_url = f"data:image/png;base64,{base64_png}"
+
+            width, height = 0, 0
+            if PIL_AVAILABLE and Image is not None:
+                with Image.open(output_path) as img:
+                    width, height = img.size
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "format": "png",
+                    "path": output_path,
+                    "file_size": file_size,
+                    "width": width,
+                    "height": height,
+                    "data_url": data_url,
+                    "base64": base64_png,
+                    "embed_code": f"![Mermaid Diagram]({data_url})",
+                    "html_img": f'<img src="{data_url}" alt="Strategy Diagram" />',
+                    "message": f"PNG saved to {output_path} ({width}x{height}px)",
+                }
+            )
+
+    except ImportError:
         return json.dumps(
             {
-                "success": True,
-                "format": "png",
-                "url": url,
-                "direct_url": f"{base_url}/img/{encoded_code}",
-                "embed_code": f"![Mermaid Diagram]({url})",
-                "markdown_image": f"![Diagram]({url})",
-                "message": "PNG image generated successfully",
+                "success": False,
+                "error": "mermaid-py not installed",
+                "message": "Install: pip install mermaid-py",
             }
         )
-
     except Exception as e:
         return json.dumps(
             {
                 "success": False,
                 "error": str(e),
                 "message": "Failed to convert diagram to image",
-                "alternative": {
-                    "mermaid_live": "https://mermaid.live/edit",
-                    "copy_code": "Copy the Mermaid code and paste into mermaid.live",
-                },
             }
         )
+
+
+@tool
+def get_diagram_image_url(diagram_code: str, output_format: str = "png") -> str:
+    """Get direct URL for Mermaid diagram using mermaid.ink API.
+
+    Args:
+        diagram_code: The Mermaid diagram code
+        output_format: "png" or "svg"
+
+    Returns:
+        JSON string with direct URL for embedding
+    """
+    try:
+        clean_code = diagram_code.strip()
+        clean_code = re.sub(r"^```mermaid\s*", "", clean_code)
+        clean_code = re.sub(r"\s*```$", "", clean_code)
+
+        encoded = (
+            clean_code.replace("\n", "%0A").replace(" ", "%20").replace("'", "%27")
+        )
+        base = "https://mermaid.ink"
+
+        if output_format == "svg":
+            url = f"{base}/svg/{encoded}"
+            return json.dumps(
+                {
+                    "success": True,
+                    "format": "svg",
+                    "url": url,
+                    "embed_html": f'<img src="{url}" alt="Mermaid Diagram" />',
+                    "markdown": f"![Diagram]({url})",
+                }
+            )
+
+        url = f"{base}/img/{encoded}"
+        return json.dumps(
+            {
+                "success": True,
+                "format": "png",
+                "url": url,
+                "embed_html": f'<img src="{url}" alt="Mermaid Diagram" />',
+                "markdown": f"![Diagram]({url})",
+            }
+        )
+
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
 
 
 @tool
