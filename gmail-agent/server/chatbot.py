@@ -19,12 +19,7 @@ from server.tools.pillow_quote_generator import (
 )
 from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
 from server.tools.avatar_quote_generator import generate_quote_with_person_photo
-from server.tools.social_media_poster import (
-    post_quote_to_twitter,
-    post_quote_to_facebook,
-    post_quote_to_instagram,
-    post_quote_to_all_platforms,
-)
+from server.tools.social_media_poster import get_social_media_tools
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -783,35 +778,8 @@ def get_agent_tools(user_id: str):
         generate_quote_with_person_photo,  # Avatar - person photo background
     ]
 
-    # Social Media Tools (wrapped with user_id)
-    @tool("post_quote_to_twitter")
-    def wrapped_post_quote_to_twitter(image_path: str, caption: str) -> str:
-        """Post a quote image to Twitter/X with caption."""
-        return post_quote_to_twitter(user_id, image_path, caption)
-
-    @tool("post_quote_to_facebook")
-    def wrapped_post_quote_to_facebook(image_path: str, caption: str) -> str:
-        """Post a quote image to Facebook Page."""
-        return post_quote_to_facebook(user_id, image_path, caption)
-
-    @tool("post_quote_to_instagram")
-    def wrapped_post_quote_to_instagram(image_path: str, caption: str) -> str:
-        """Post a quote image to Instagram."""
-        return post_quote_to_instagram(user_id, image_path, caption)
-
-    @tool("post_quote_to_all_platforms")
-    def wrapped_post_quote_to_all_platforms(
-        image_path: str, caption: str, platforms: str = "twitter,facebook,instagram"
-    ) -> str:
-        """Post a quote image to multiple social media platforms."""
-        return post_quote_to_all_platforms(user_id, image_path, caption, platforms)
-
-    social_media_tools = [
-        wrapped_post_quote_to_twitter,
-        wrapped_post_quote_to_facebook,
-        wrapped_post_quote_to_instagram,
-        wrapped_post_quote_to_all_platforms,
-    ]
+    # Social Media Tools (Verified Native Approach)
+    social_media_tools = get_social_media_tools(user_id)
 
     return (
         serper_tools
@@ -864,10 +832,12 @@ You can directly post quote images to social media platforms using Composio inte
 3. Return confirmation with post details/URL
 
 **Tools Available:**
-- `post_quote_to_twitter(image_path, caption)` - Post to Twitter/X
-- `post_quote_to_facebook(image_path, caption)` - Post to Facebook Page
-- `post_quote_to_instagram(image_path, caption)` - Post to Instagram
-- `post_quote_to_all_platforms(image_path, caption, platforms)` - Post to multiple platforms
+- **Dynamic Discovery**: The agent uses `COMPOSIO_SEARCH_TOOLS` to find social media capabilities.
+- **Workflow**:
+  1. CALL `COMPOSIO_SEARCH_TOOLS` with a query like "post to twitter" or "create facebook post".
+  2. The tool will return specific actions (e.g., `twitter_creation_of_a_post`) and their schemas.
+  3. CALL `COMPOSIO_MULTI_EXECUTE_TOOL` with the found slug and arguments (e.g., `{"text": "..."}`).
+- **Do NOT** hallucinate tool names like `post_quote_to_twitter`. use ONLY what `COMPOSIO_SEARCH_TOOLS` returns.
 
 **Important Notes:**
 - All social media tools require user OAuth connections configured in Composio
@@ -1270,6 +1240,10 @@ Always confirm success after sending email (format: "✅ Email berhasil dikirim 
 - generate_pdf_report_wrapped(markdown_content, filename, sender_email) → Returns ABSOLUTE FILE PATH
 - gmail_send_email(recipient_email, subject, body, attachment) → Send email
 - gmail_fetch_emails: Retrieve email context
+- post_quote_to_twitter(image_path, caption) → Post to Twitter/X
+- post_quote_to_facebook(image_path, caption) → Post to Facebook Page
+- post_quote_to_instagram(image_path, caption) → Post to Instagram
+- post_quote_to_all_platforms(image_path, caption, platforms) → Post to multiple platforms
 
 ## CRITICAL RULES:
 1. NEVER hallucinate - only report verified information
