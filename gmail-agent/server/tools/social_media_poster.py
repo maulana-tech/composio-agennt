@@ -53,6 +53,9 @@ def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
     Args:
         text: The tweet content (max 280 characters)
         image_path: Optional path to image file to attach
+
+    Returns:
+        Success message with tweet URL
     """
     user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
     try:
@@ -85,7 +88,8 @@ def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
 
                     if result.get("successful"):
                         tweet_id = result.get("data", {}).get("data", {}).get("id", "")
-                        return f"✅ Successfully posted to Twitter with image! Tweet ID: {tweet_id}"
+                        tweet_url = f"https://twitter.com/i/status/{tweet_id}"
+                        return f"✅ Successfully posted to Twitter with image!\n\n🔗 **Link:** {tweet_url}"
                     else:
                         error = result.get("data", {}).get(
                             "message", result.get("error", "Unknown error")
@@ -100,7 +104,10 @@ def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
                 dangerously_skip_version_check=True,
             )
             tweet_id = result.get("data", {}).get("data", {}).get("id", "")
-            return f"⚠️ Image upload failed, posted text only. Tweet ID: {tweet_id}"
+            tweet_url = f"https://twitter.com/i/status/{tweet_id}"
+            return (
+                f"⚠️ Image upload failed, posted text only!\n\n🔗 **Link:** {tweet_url}"
+            )
         else:
             # Text-only post
             result = client.tools.execute(
@@ -112,7 +119,8 @@ def post_to_twitter(text: str, image_path: Optional[str] = None) -> str:
 
             if result.get("successful"):
                 tweet_id = result.get("data", {}).get("data", {}).get("id", "")
-                return f"✅ Successfully posted to Twitter! Tweet ID: {tweet_id}"
+                tweet_url = f"https://twitter.com/i/status/{tweet_id}"
+                return f"✅ Successfully posted to Twitter!\n\n🔗 **Link:** {tweet_url}"
             else:
                 error = result.get("data", {}).get(
                     "message", result.get("error", "Unknown error")
@@ -166,6 +174,9 @@ def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
     Args:
         message: The post content/caption
         image_path: Optional path to image file to attach
+
+    Returns:
+        Success message with post URL
     """
     user_id = "pg-test-a199d8f3-e74a-42e0-956b-b1fbb2808b58"
     try:
@@ -182,10 +193,12 @@ def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
     )
 
     page_id = None
+    page_name = None
     if page_result.get("successful"):
         data = page_result.get("data", {}).get("data", [])
         if isinstance(data, list) and data:
             page_id = data[0].get("id")
+            page_name = data[0].get("name")
         else:
             response_data = (
                 page_result.get("data", {}).get("response", {}).get("data", {})
@@ -193,6 +206,7 @@ def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
             pages = response_data.get("data", [])
             if pages:
                 page_id = pages[0].get("id")
+                page_name = pages[0].get("name")
 
     if not page_id:
         return "❌ Error: Could not find Facebook page ID"
@@ -214,7 +228,8 @@ def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
 
             if result.get("successful"):
                 post_id = result.get("data", {}).get("post_id", "")
-                return f"✅ Successfully posted photo to Facebook! Post ID: {post_id}"
+                fb_url = f"https://www.facebook.com/{post_id}"
+                return f"✅ Successfully posted photo to Facebook!\n\n🔗 **Link:** {fb_url}"
             else:
                 error = result.get("data", {}).get(
                     "message", result.get("error", "Unknown error")
@@ -231,7 +246,8 @@ def post_to_facebook(message: str, image_path: Optional[str] = None) -> str:
 
             if result.get("successful"):
                 post_id = result.get("data", {}).get("id", "")
-                return f"✅ Successfully posted to Facebook! Post ID: {post_id}"
+                fb_url = f"https://www.facebook.com/{post_id}"
+                return f"✅ Successfully posted to Facebook!\n\n🔗 **Link:** {fb_url}"
             else:
                 error = result.get("data", {}).get(
                     "message", result.get("error", "Unknown error")
