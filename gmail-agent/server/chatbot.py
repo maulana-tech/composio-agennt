@@ -20,6 +20,7 @@ from server.tools.pillow_quote_generator import (
 from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
 from server.tools.avatar_quote_generator import generate_quote_with_person_photo
 from server.tools.social_media_poster import get_social_media_tools
+from server.tools.gipa_agent import get_gipa_tools
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -818,6 +819,9 @@ def get_agent_tools(user_id: str):
         preview_mermaid_diagram,
     ]
 
+    # GIPA (Government Information Public Access) Tools
+    gipa_tools = get_gipa_tools()
+
     return (
         serper_tools
         + search_tools
@@ -825,6 +829,7 @@ def get_agent_tools(user_id: str):
         + quote_tools
         + social_media_tools
         + strategy_tools
+        + gipa_tools
         + gmail_tools
     )
 
@@ -1356,6 +1361,19 @@ You:
 9. **EMAIL FORMATTING - ZERO TOLERANCE:** When sending email WITHOUT PDF, you MUST use the structured format with • bullets, ━━━ dividers, and **bold** keywords. NEVER use asterisk (*) bullets. ALWAYS include section dividers and proper structure. If format is wrong, revise before sending.
 10. **AUTO-SEND WITHOUT CONFIRMATION:** When user context clearly implies email sending (e.g., "kirim ke email", "reply", "laporkan") AND user does NOT mention PDF/file, you MUST immediately send the formatted text email WITHOUT asking for confirmation. Do NOT say "Would you like me to send..." - just SEND IT immediately after research completes.
 
+### GIPA / Government Information Access Requests (NSW):
+When a user wants to make a GIPA request, FOI request, or government information access request:
+1. **Start**: Call `gipa_start_request` with the session_id to begin the interview process.
+2. **Collect**: For each user response, call `gipa_process_answer` with their answer. The tool will extract variables and return the next question.
+3. **Generate**: Once all information is collected and confirmed, call `gipa_generate_document` to produce the formal application.
+4. **Keywords**: You can also use `gipa_expand_keywords` standalone to expand keywords into legally robust definitions.
+
+**Important GIPA Rules:**
+- This is for New South Wales. Use "GIPA Act" terminology, NOT "FOI" (that's Federal/Commonwealth).
+- NEVER use vague phrases like "documents about." Use precise phrasing: "All correspondence between [Person A] and [Person B] containing the keyword [X]."
+- Always pass through the full clarification phase - do not skip questions.
+- The generated document can be sent via email or converted to PDF using the existing PDF tools.
+
 ## QUALITY STANDARDS:
 - PDF Reports: Minimum 3-5 pages of substantial content
 - Political Analysis: Minimum 5 quotes with full citations
@@ -1391,6 +1409,8 @@ async def chat(
         r"\b(analisis|analysis|research|investigate|investigasi|fakta|fact check|verifikasi|verify|bandingkan|compare|sejarah|history|timeline|data|statistik)\b",
         # Document generation keywords
         r"\b(dokumen|document|file|word|excel|csv|presentasi|presentation|slide|export|save|simpan|arsip|archive)\b",
+        # GIPA / FOI / Government Information Access keywords
+        r"\b(gipa|foi|freedom of information|government information|public access|information request|information access|right to information|rti)\b",
     ]
 
     # Check for explicit tool intent
