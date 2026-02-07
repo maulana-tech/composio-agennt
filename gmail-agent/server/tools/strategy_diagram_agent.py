@@ -142,43 +142,147 @@ Return ONLY JSON:
 
 @tool
 def generate_mermaid_diagram(
-    analysis_json: str, custom_style: str = "professional"
+    analysis_json: str, custom_style: str = "professional", max_nodes: int = 8
 ) -> str:
-    """Generate Mermaid.js diagram code from strategic analysis."""
+    """Generate Mermaid.js diagram code from strategic analysis.
+
+    Args:
+        analysis_json: JSON string with strategic analysis
+        custom_style: Diagram style (professional, minimal)
+        max_nodes: Maximum number of nodes (default: 8, max: 12)
+    """
     llm = get_llm()
+
+    # Enforce max_nodes limit
+    max_nodes = min(max(max_nodes, 4), 12)
 
     try:
         analysis = json.loads(analysis_json)
     except:
         return "%% Error: Invalid analysis JSON"
 
-    diagram_prompt = f"""
-Generate ONLY valid Mermaid code (no markdown, no explanations):
+    # Extract key info for simpler diagram
+    stakeholders = analysis.get("stakeholders", [])[:5]
+    stakeholders_str = ", ".join(stakeholders[:3]) if stakeholders else "Stakeholders"
 
-Analysis: {json.dumps(analysis)}
+    diagram_prompt = f"""Generate a simple Mermaid diagram with MAX {max_nodes} nodes.
 
-Requirements:
-1. Start with: graph LR or graph TD
-2. Use simple IDs: A, B, C, D, E
-3. Format: A[Label] or A{{Decision}}
-4. Arrows: A --> B
-5. Include all stakeholders
-6. NO markdown code blocks
-7. NO text before or after code
+Topic: {stakeholders_str}
 
-Example:
+Rules:
+- MAX {max_nodes} nodes total (including decisions)
+- Use letters A, B, C, D... for IDs
+- Format: A[Label] or A{{Decision}}
+- Arrows: A --> B
+- NO explanations, NO text, NO sentences
+- ONLY the diagram code
+
+Example (max 6 nodes):
 graph LR
-    A[Marketing] --> B[Sales]
+    A[CEO] --> B[Manager]
+    B --> C[Staff]
+    C --> D[End]
 
-Generate now:
-"""
+Generate ONLY the diagram code:"""
 
     try:
         response = llm.invoke(diagram_prompt)
-        content = clean_mermaid_response(str(response.content))
+        content = str(response.content).strip()
+
+        # Split by lines and filter
+        lines = content.split("\n")
+        code_lines = []
+        node_count = 0
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip lines that look like explanations
+            if not stripped:
+                continue
+            if any(
+                x in stripped.lower()
+                for x in [
+                    "sorry",
+                    "cannot",
+                    "this shows",
+                    "this diagram",
+                    "here is",
+                    "note:",
+                    "```",
+                    "`",
+                    "result:",
+                    "output:",
+                    "answer:",
+                    "explanation:",
+                    "the diagram shows",
+                    "as shown",
+                    "which shows",
+                ]
+            ):
+                continue
+
+            # Count nodes
+            if ("[" in stripped and "]" in stripped) or (
+                "{" in stripped and "}" in stripped
+            ):
+                node_count += 1
+
+            # Start collecting when we hit graph
+            if stripped.lower().startswith("graph"):
+                code_lines = [stripped]
+                node_count = 0
+            elif code_lines:
+                # Check if line has valid mermaid content
+                if "-->" in stripped or "[" in stripped or "{" in stripped:
+                    cleaned = re.sub(r"^[\d\.\-\*\>]\s*", "", stripped)
+                    code_lines.append(cleaned)
+                elif len(stripped) > 3 and not stripped.startswith("graph"):
+                    # Skip lines that look like prose
+                    continue
+
+            # Stop if too many nodes
+            if node_count >= max_nodes:
+                break
+
+        content = "\n".join(code_lines).strip()
+
+        # Ensure valid start
+        if not content.lower().startswith("graph"):
+            # Try to extract just the code part
+            match = re.search(r"(graph\s*\w*[\s\S]*)", content, re.IGNORECASE)
+            if match:
+                content = match.group(1)
+            else:
+                content = f"graph LR\n    A[Start] --> B[End]"
+
+        # Final cleanup - remove any trailing text after code
+        # Look for patterns that indicate the code ended
+        lines = content.split("\n")
+        clean_lines = []
+        for line in lines:
+            # Skip lines that don't look like mermaid
+            if not line.strip():
+                continue
+            if any(
+                x in line.lower()
+                for x in ["this diagram", "shows the", "illustrates", "represents"]
+            ):
+                break
+            if line.strip().endswith(".") and len(line) > 50 and "-->" not in line:
+                break
+            clean_lines.append(line)
+
+        content = "\n".join(clean_lines).strip()
+
+        # Limit to reasonable number of lines
+        final_lines = content.split("\n")[:12]
+        content = "\n".join(final_lines).strip()
+
         return content
+
     except Exception as e:
-        return "%% Error: " + str(e)
+        return f"%% Error: {str(e)}"
 
 
 @tool
