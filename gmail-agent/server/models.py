@@ -150,3 +150,31 @@ class FetchSpecificEmailRequest(BaseModel):
     user_id: str = Field(default="default")
     email_id: str
     query: Optional[str] = ""
+
+
+# ========== GIPA Models ==========
+
+
+class GIPAStartRequest(BaseModel):
+    session_id: str = Field(default="default")
+
+
+class GIPAAnswerRequest(BaseModel):
+    session_id: str = Field(default="default")
+    answer: str
+
+
+class GIPAGenerateRequest(BaseModel):
+    session_id: str = Field(default="default")
+
+
+class GIPAExpandKeywordsRequest(BaseModel):
+    keywords: List[str] = Field(min_length=1)
+
+
+class GIPAResponse(BaseModel):
+    success: bool
+    message: str
+    status: Optional[str] = None
+    document: Optional[str] = None
+    error: Optional[str] = None
