@@ -802,6 +802,9 @@ def get_agent_tools(user_id: str):
         generate_mermaid_diagram,
         generate_graphviz_diagram,
         validate_diagram_code,
+        convert_mermaid_to_image,
+        render_mermaid_online,
+        preview_mermaid_diagram,
     )
 
     strategy_tools = [
@@ -810,6 +813,9 @@ def get_agent_tools(user_id: str):
         generate_mermaid_diagram,
         generate_graphviz_diagram,
         validate_diagram_code,
+        convert_mermaid_to_image,
+        render_mermaid_online,
+        preview_mermaid_diagram,
     ]
 
     return (
@@ -1312,6 +1318,31 @@ Always confirm success after sending email (format: "✅ Email berhasil dikirim 
 - post_to_all_platforms(text, platforms, image_path) → Post to multiple platforms
 - get_facebook_page_id: Get default Facebook Page ID
 - upload_media_to_twitter(image_path): Upload media to Twitter first
+
+## STRATEGY DIAGRAM TOOLS (IMPORTANT):
+- create_strategy_diagram(prompt, format_type, style) → Generate complete strategy diagram
+- analyze_strategic_prompt(prompt) → Analyze stakeholders and relationships
+- generate_mermaid_diagram(analysis_json, max_nodes) → Generate Mermaid.js code
+- generate_graphviz_diagram(analysis_json) → Generate Graphviz DOT code
+- validate_diagram_code(diagram_code, format_type) → Validate diagram code
+- convert_mermaid_to_image(diagram_code, output_format) → **CONVERT MERMAID TO IMAGE**
+- render_mermaid_online(diagram_code) → Get online rendering URLs
+
+### CONVERTING MERMAID TO IMAGE (CRITICAL):
+When user asks to "convert mermaid to image", "render diagram", "generate image from diagram":
+1. FIRST generate mermaid code using create_strategy_diagram or generate_mermaid_diagram
+2. THEN call convert_mermaid_to_image(diagram_code, output_format="png")
+3. RETURN the image path/data_url to user
+4. DO NOT say "I cannot convert" - USE THE TOOL!
+
+Example:
+```
+User: "Convert this mermaid to image"
+You: 
+1. generate_mermaid_diagram(...)
+2. convert_mermaid_to_image(diagram_code, output_format="png")
+→ Returns: {"path": "/tmp/mermaid_images/diagram.png", "data_url": "data:image/png;base64,...}
+```
 
 ## CRITICAL RULES:
 1. NEVER hallucinate - only report verified information
