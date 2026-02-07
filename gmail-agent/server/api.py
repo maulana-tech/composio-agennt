@@ -26,6 +26,11 @@ from .models import (
     EmailAnalysisRequest,
     EmailAnalysisResponse,
     FetchSpecificEmailRequest,
+    GIPAStartRequest,
+    GIPAAnswerRequest,
+    GIPAGenerateRequest,
+    GIPAExpandKeywordsRequest,
+    GIPAResponse,
 )
 from .auth import (
     create_connection,
@@ -774,6 +779,74 @@ def create_app() -> FastAPI:
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    # ========== GIPA (Government Information Public Access) Endpoints ==========
+
+    @app.post("/gipa/start", response_model=GIPAResponse)
+    async def gipa_start(request: GIPAStartRequest):
+        """Start a new GIPA request session and return the first clarification question."""
+        try:
+            from .tools.gipa_agent import GIPARequestAgent
+
+            agent = GIPARequestAgent()
+            message = await agent.start_request(request.session_id)
+            return GIPAResponse(
+                success=True,
+                message=message,
+                status="collecting",
+            )
+        except Exception as e:
+            return GIPAResponse(success=False, message="", error=str(e))
+
+    @app.post("/gipa/answer", response_model=GIPAResponse)
+    async def gipa_answer(request: GIPAAnswerRequest):
+        """Process a user's answer during GIPA clarification and return the next question."""
+        try:
+            from .tools.gipa_agent import GIPARequestAgent
+
+            agent = GIPARequestAgent()
+            message = await agent.process_answer(request.session_id, request.answer)
+            return GIPAResponse(
+                success=True,
+                message=message,
+                status="collecting",
+            )
+        except Exception as e:
+            return GIPAResponse(success=False, message="", error=str(e))
+
+    @app.post("/gipa/generate", response_model=GIPAResponse)
+    async def gipa_generate(request: GIPAGenerateRequest):
+        """Generate the formal GIPA application document from collected data."""
+        try:
+            from .tools.gipa_agent import GIPARequestAgent
+
+            agent = GIPARequestAgent()
+            document = await agent.generate_document(request.session_id)
+            return GIPAResponse(
+                success=True,
+                message="GIPA application generated successfully.",
+                status="generated",
+                document=document,
+            )
+        except Exception as e:
+            return GIPAResponse(success=False, message="", error=str(e))
+
+    @app.post("/gipa/expand-keywords", response_model=GIPAResponse)
+    async def gipa_expand_keywords(request: GIPAExpandKeywordsRequest):
+        """Expand keywords into legally robust definitions for GIPA/FOI scope."""
+        try:
+            from .tools.gipa_agent import SynonymExpander
+
+            expander = SynonymExpander()
+            definitions = await expander.expand_keywords(request.keywords)
+            formatted = "\n".join(f"{i + 1}. {d}" for i, d in enumerate(definitions))
+            return GIPAResponse(
+                success=True,
+                message=formatted,
+                status="completed",
+            )
+        except Exception as e:
+            return GIPAResponse(success=False, message="", error=str(e))
 
     return app
 
