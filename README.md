@@ -148,7 +148,6 @@ For detailed documentation, see the [docs/](docs/) folder:
 - [🎨 Frontend Guide](docs/FRONTEND.md) - Next.js frontend details
 - [📡 API Reference](docs/API.md) - Complete API documentation
 - [⚙️ Setup Guide](docs/SETUP.md) - Detailed installation instructions
-- [📸 Screenshots & Demo](docs/SCREENSHOTS.md) - Visual documentation
 
 ## 🛠️ Tech Stack
 
