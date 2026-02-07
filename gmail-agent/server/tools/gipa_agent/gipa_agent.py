@@ -1,0 +1,390 @@
+"""
+GIPA Request Agent - Orchestrator and LangChain Tool Exports.
+
+This is the main entry point for the GIPA agent. It:
+1. Manages the stateful clarification conversation via an in-memory session store
+2. Orchestrates the ClarificationEngine -> DocumentGenerator pipeline
+3. Exposes @tool decorated functions for integration into the main ReAct agent
+
+The agent maintains per-session state so multiple users can have concurrent
+GIPA clarification conversations.
+"""
+
+import asyncio
+import json
+import os
+from typing import Dict, Any, List, Optional
+from langchain_core.tools import tool
+
+from .clarification_engine import ClarificationEngine, GIPARequestData
+from .document_generator import GIPADocumentGenerator
+from .synonym_expander import SynonymExpander
+from .jurisdiction_config import get_jurisdiction_config, NSW_CONFIG
+
+
+# ---------------------------------------------------------------------------
+# Session Store (in-memory, per-process)
+# ---------------------------------------------------------------------------
+
+# Maps session_id -> { "data": dict, "context": str, "status": str }
+_gipa_sessions: Dict[str, Dict[str, Any]] = {}
+
+
+def _get_or_create_session(session_id: str) -> Dict[str, Any]:
+    """Get existing GIPA session or create a new one."""
+    if session_id not in _gipa_sessions:
+        _gipa_sessions[session_id] = {
+            "data": {},
+            "context": "",
+            "status": "collecting",  # collecting | ready | generated
+            "document": None,
+        }
+    return _gipa_sessions[session_id]
+
+
+def _clear_session(session_id: str):
+    """Clear a GIPA session."""
+    _gipa_sessions.pop(session_id, None)
+
+
+# ---------------------------------------------------------------------------
+# GIPARequestAgent Orchestrator
+# ---------------------------------------------------------------------------
+
+
+class GIPARequestAgent:
+    """
+    Orchestrates the full GIPA request workflow:
+    1. Clarification phase - interview the user
+    2. Validation - ensure all required data is collected
+    3. Generation - produce the formal GIPA application document
+    """
+
+    def __init__(self, google_api_key: Optional[str] = None):
+        api_key = google_api_key or os.environ.get("GOOGLE_API_KEY")
+        self.clarification_engine = ClarificationEngine(google_api_key=api_key)
+        self.synonym_expander = SynonymExpander(google_api_key=api_key)
+        self.document_generator = GIPADocumentGenerator(
+            synonym_expander=self.synonym_expander
+        )
+
+    async def start_request(self, session_id: str) -> str:
+        """
+        Start a new GIPA request session.
+
+        Returns the first question to ask the user.
+        """
+        session = _get_or_create_session(session_id)
+        session["data"] = {}
+        session["context"] = ""
+        session["status"] = "collecting"
+        session["document"] = None
+
+        intro = (
+            "I'll help you prepare a formal GIPA (Government Information Public Access) "
+            "application for New South Wales. I need to collect some specific information "
+            "to make the request as precise and legally robust as possible.\n\n"
+            "A well-drafted GIPA request acts as a search query that a government officer "
+            "cannot reject for being 'unreasonable' or 'vague.'\n\n"
+            "Let's start with the basics.\n\n"
+            "**Which government agency are you requesting information from?** "
+            "(e.g., Department of Primary Industries, NSW Police Force, Transport for NSW)"
+        )
+
+        return intro
+
+    async def process_answer(
+        self,
+        session_id: str,
+        user_message: str,
+    ) -> str:
+        """
+        Process a user's answer during the clarification phase.
+
+        Args:
+            session_id: The session identifier.
+            user_message: The user's response.
+
+        Returns:
+            The next question to ask, a confirmation summary, or the generated document.
+        """
+        session = _get_or_create_session(session_id)
+
+        if session["status"] == "generated":
+            return (
+                "The GIPA application has already been generated for this session. "
+                "If you need to start a new request, please use the start command."
+            )
+
+        # Extract variables from the user's message
+        (
+            updated_data,
+            missing_questions,
+            is_complete,
+        ) = await self.clarification_engine.extract_variables(
+            user_message=user_message,
+            current_data=session["data"],
+            conversation_context=session["context"],
+        )
+
+        # Update session
+        session["data"] = updated_data
+        session["context"] += f"\nUser: {user_message}\n"
+
+        if is_complete:
+            session["status"] = "ready"
+            # Build a confirmation summary
+            return self._build_confirmation_summary(updated_data)
+        else:
+            # Ask the next question (take the first missing one)
+            next_question = missing_questions[0]
+            remaining = len(missing_questions) - 1
+
+            response = next_question
+            if remaining > 0:
+                response += f"\n\n*({remaining} more question{'s' if remaining > 1 else ''} after this)*"
+
+            return response
+
+    async def generate_document(self, session_id: str) -> str:
+        """
+        Generate the GIPA application document from collected data.
+
+        Args:
+            session_id: The session identifier.
+
+        Returns:
+            The complete GIPA application as Markdown, or an error message.
+        """
+        session = _get_or_create_session(session_id)
+
+        if session["status"] == "collecting":
+            # Check if we have enough data anyway
+            is_valid, errors = self.clarification_engine.validate_data(session["data"])
+            if not is_valid:
+                error_list = "\n".join(f"- {e}" for e in errors)
+                return (
+                    f"Cannot generate the document yet. Missing information:\n{error_list}\n\n"
+                    f"Please continue answering the clarification questions."
+                )
+
+        try:
+            # Build the validated data object
+            gipa_data = self.clarification_engine.build_gipa_request_data(
+                session["data"]
+            )
+
+            # Get jurisdiction config
+            config = get_jurisdiction_config(gipa_data.jurisdiction)
+
+            # Generate the document
+            document = await self.document_generator.generate(
+                data=gipa_data,
+                config=config,
+            )
+
+            session["status"] = "generated"
+            session["document"] = document
+
+            return document
+
+        except Exception as e:
+            return f"Error generating GIPA application: {str(e)}"
+
+    def _build_confirmation_summary(self, data: Dict[str, Any]) -> str:
+        """Build a confirmation summary of all collected data."""
+        lines = [
+            "I have all the information needed. Here's a summary of your GIPA request:\n",
+            f"**Agency:** {data.get('agency_name', 'N/A')}",
+        ]
+
+        if data.get("agency_email"):
+            lines.append(f"**Agency GIPA Email:** {data['agency_email']}")
+        else:
+            lines.append(
+                "**Agency GIPA Email:** *Not provided - you should find this before submitting*"
+            )
+
+        lines.extend(
+            [
+                f"**Applicant:** {data.get('applicant_name', 'N/A')}",
+            ]
+        )
+
+        if data.get("applicant_organization"):
+            lines.append(f"**Organisation:** {data['applicant_organization']}")
+
+        lines.append(f"**Applicant Type:** {data.get('applicant_type', 'individual')}")
+
+        if data.get("applicant_type") in ("nonprofit", "journalist", "student"):
+            lines.append(
+                "**Fee Reduction:** Eligible (50% reduction will be requested)"
+            )
+
+        lines.extend(
+            [
+                f"**Period:** {data.get('start_date', 'N/A')} to {data.get('end_date', 'N/A')}",
+                f"**Public Interest:** {data.get('public_interest_justification', 'N/A')}",
+            ]
+        )
+
+        # Targets
+        targets = data.get("targets", [])
+        if targets:
+            lines.append("**Targets:**")
+            for t in targets:
+                if isinstance(t, dict):
+                    name = t.get("name", "Unknown")
+                    role = t.get("role", "")
+                    direction = t.get("direction", "both")
+                else:
+                    name = t.name
+                    role = t.role or ""
+                    direction = t.direction
+
+                role_str = f" ({role})" if role else ""
+                lines.append(f"  - {name}{role_str} [{direction}]")
+
+        # Keywords
+        keywords = data.get("keywords", [])
+        if keywords:
+            lines.append(f"**Keywords:** {', '.join(keywords)}")
+
+        lines.extend(
+            [
+                "",
+                "---",
+                "**Does this look correct?** If yes, I'll generate the formal GIPA application document. "
+                "If you need to change anything, let me know.",
+            ]
+        )
+
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# LangChain @tool functions
+# ---------------------------------------------------------------------------
+
+# Singleton agent instance (lazy-initialized)
+_agent_instance: Optional[GIPARequestAgent] = None
+
+
+def _get_agent() -> GIPARequestAgent:
+    """Get or create the singleton GIPARequestAgent."""
+    global _agent_instance
+    if _agent_instance is None:
+        _agent_instance = GIPARequestAgent()
+    return _agent_instance
+
+
+@tool
+async def gipa_start_request(session_id: str = "default") -> str:
+    """Start a new GIPA (Government Information Public Access) request for NSW.
+
+    This tool begins the interview process to collect all required information
+    for a formal GIPA application. Call this when a user wants to make a
+    government information access request in New South Wales.
+
+    Args:
+        session_id: Session identifier to track the conversation. Use the chat session ID.
+
+    Returns:
+        Introduction text and the first clarification question.
+    """
+    agent = _get_agent()
+    return await agent.start_request(session_id)
+
+
+@tool
+async def gipa_process_answer(
+    user_answer: str,
+    session_id: str = "default",
+) -> str:
+    """Process a user's answer during GIPA request clarification.
+
+    Call this tool each time the user provides information for their GIPA request.
+    The tool extracts structured data from their response and returns the next
+    question, or a confirmation summary when all data is collected.
+
+    Args:
+        user_answer: The user's response to the previous clarification question.
+        session_id: Session identifier to track the conversation.
+
+    Returns:
+        The next clarification question, or a confirmation summary if all data is collected.
+    """
+    agent = _get_agent()
+    return await agent.process_answer(session_id, user_answer)
+
+
+@tool
+async def gipa_generate_document(session_id: str = "default") -> str:
+    """Generate the formal GIPA application document.
+
+    Call this tool after all clarification questions have been answered and
+    the user has confirmed the summary is correct. This generates the complete,
+    legally robust GIPA application document in Markdown format.
+
+    The document includes:
+    - Header & routing information
+    - Fee reduction request (if eligible)
+    - Precise Boolean search terms
+    - Comprehensive scope & definitions (legal shield)
+    - AI-expanded keyword definitions
+
+    Args:
+        session_id: Session identifier for the completed clarification session.
+
+    Returns:
+        The complete GIPA application document in Markdown format.
+    """
+    agent = _get_agent()
+    return await agent.generate_document(session_id)
+
+
+@tool
+async def gipa_expand_keywords(keywords: str) -> str:
+    """Expand keywords into legally robust definitions for a GIPA/FOI request.
+
+    Takes a comma-separated list of keywords and generates comprehensive
+    legal definitions that include scientific names, common aliases,
+    abbreviations, and related terms. This prevents agencies from
+    narrowly interpreting search terms.
+
+    This can be used standalone without starting a full GIPA request.
+
+    Args:
+        keywords: Comma-separated list of keywords to expand (e.g., "koala, dingo, water licence").
+
+    Returns:
+        Formatted definition strings for each keyword.
+    """
+    agent = _get_agent()
+    keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
+
+    if not keyword_list:
+        return "Please provide at least one keyword to expand."
+
+    definitions = await agent.synonym_expander.expand_keywords(keyword_list)
+
+    result_lines = ["**Keyword Definitions for GIPA/FOI Scope:**\n"]
+    for i, definition in enumerate(definitions, 1):
+        result_lines.append(f"{i}. {definition}")
+
+    return "\n".join(result_lines)
+
+
+def get_gipa_tools() -> list:
+    """
+    Get all GIPA-related LangChain tools for integration into the main agent.
+
+    Returns:
+        List of LangChain tool objects.
+    """
+    return [
+        gipa_start_request,
+        gipa_process_answer,
+        gipa_generate_document,
+        gipa_expand_keywords,
+    ]
