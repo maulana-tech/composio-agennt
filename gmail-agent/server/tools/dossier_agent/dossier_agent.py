@@ -11,6 +11,7 @@ meeting prep dossier with bio, statements, associates, and conversation starters
 """
 
 import os
+import time
 from typing import Dict, Any, Optional
 from langchain_core.tools import tool
 
@@ -18,6 +19,14 @@ from .data_collector import DataCollector
 from .research_synthesizer import ResearchSynthesizer
 from .strategic_analyzer import StrategicAnalyzer
 from .dossier_generator import DossierGenerator
+from .exceptions import (
+    DossierError,
+    DossierCollectionError,
+    DossierSynthesisError,
+    DossierAnalysisError,
+    DossierGenerationError,
+    DossierSessionError,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +42,21 @@ from .dossier_generator import DossierGenerator
 #   "synthesized_data": dict | None,
 #   "strategic_insights": dict | None,
 #   "document": str | None,
+#   "created_at": float,  # time.time()
+#   "last_accessed": float,  # time.time()
 # }
 _dossier_sessions: Dict[str, Dict[str, Any]] = {}
 
+# Default TTL: 24 hours
+SESSION_TTL_SECONDS = 24 * 60 * 60
+
 
 def _get_session(dossier_id: str) -> Optional[Dict[str, Any]]:
-    """Get an existing dossier session."""
-    return _dossier_sessions.get(dossier_id)
+    """Get an existing dossier session and update its last_accessed time."""
+    session = _dossier_sessions.get(dossier_id)
+    if session is not None:
+        session["last_accessed"] = time.time()
+    return session
 
 
 def _create_session(
@@ -49,6 +66,7 @@ def _create_session(
     meeting_context: str = "",
 ) -> Dict[str, Any]:
     """Create a new dossier session."""
+    now = time.time()
     session = {
         "name": name,
         "linkedin_url": linkedin_url,
@@ -58,6 +76,8 @@ def _create_session(
         "synthesized_data": None,
         "strategic_insights": None,
         "document": None,
+        "created_at": now,
+        "last_accessed": now,
     }
     _dossier_sessions[dossier_id] = session
     return session
@@ -66,6 +86,20 @@ def _create_session(
 def _clear_session(dossier_id: str):
     """Remove a dossier session."""
     _dossier_sessions.pop(dossier_id, None)
+
+
+def _cleanup_expired_sessions():
+    """Remove sessions that have exceeded the TTL."""
+    now = time.time()
+    expired = [
+        sid
+        for sid, session in _dossier_sessions.items()
+        if now - session.get("last_accessed", session.get("created_at", 0))
+        > SESSION_TTL_SECONDS
+    ]
+    for sid in expired:
+        _dossier_sessions.pop(sid, None)
+    return len(expired)
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +120,12 @@ class DossierAgent:
         self,
         google_api_key: Optional[str] = None,
         serper_api_key: Optional[str] = None,
+        composio_api_key: Optional[str] = None,
     ):
-        self.collector = DataCollector(serper_api_key=serper_api_key)
+        self.collector = DataCollector(
+            serper_api_key=serper_api_key,
+            composio_api_key=composio_api_key,
+        )
         self.synthesizer = ResearchSynthesizer(google_api_key=google_api_key)
         self.analyzer = StrategicAnalyzer(google_api_key=google_api_key)
         self.generator = DossierGenerator()
@@ -98,6 +136,8 @@ class DossierAgent:
         name: str,
         linkedin_url: str = "",
         meeting_context: str = "",
+        is_self_lookup: bool = False,
+        composio_user_id: str = "default",
     ) -> str:
         """
         Run the full dossier pipeline from data collection to document generation.
@@ -107,17 +147,25 @@ class DossierAgent:
             name: Full name of the person.
             linkedin_url: Optional LinkedIn profile URL.
             meeting_context: Optional context about why the meeting is happening.
+            is_self_lookup: If True, use Composio GET_MY_INFO for LinkedIn data.
+            composio_user_id: Composio user ID (required if is_self_lookup=True).
 
         Returns:
             The complete dossier as a Markdown string.
         """
         session = _create_session(dossier_id, name, linkedin_url, meeting_context)
 
+        # Opportunistic cleanup of expired sessions
+        _cleanup_expired_sessions()
+
         try:
             # Step 1: Collect data
             session["status"] = "collecting"
             collected = await self.collector.collect(
-                name=name, linkedin_url=linkedin_url
+                name=name,
+                linkedin_url=linkedin_url,
+                is_self_lookup=is_self_lookup,
+                composio_user_id=composio_user_id,
             )
             session["collected_data"] = collected.to_dict()
 
@@ -144,6 +192,11 @@ class DossierAgent:
 
             return document
 
+        except DossierError as e:
+            session["status"] = "error"
+            error_msg = f"Dossier generation failed at {e.stage}: {str(e)}"
+            session["document"] = error_msg
+            return error_msg
         except Exception as e:
             session["status"] = "error"
             error_msg = f"Dossier generation failed: {str(e)}"
@@ -222,6 +275,8 @@ class DossierAgent:
 
             return document
 
+        except DossierError as e:
+            return f"Failed to update dossier at {e.stage}: {str(e)}"
         except Exception as e:
             return f"Failed to update dossier: {str(e)}"
 
@@ -281,6 +336,7 @@ async def dossier_generate(
     name: str,
     linkedin_url: str = "",
     meeting_context: str = "",
+    is_self_lookup: bool = False,
     dossier_id: str = "default",
 ) -> str:
     """Generate a comprehensive meeting prep dossier for a person.
@@ -294,10 +350,17 @@ async def dossier_generate(
     - Topics to avoid
     - Recommended meeting approach
 
+    For LinkedIn data:
+    - Set is_self_lookup=True if the user is researching THEMSELVES
+      (uses Composio LinkedIn to get rich profile data).
+    - Leave is_self_lookup=False (default) when researching OTHER people
+      (uses web search to extract LinkedIn data from Google's index).
+
     Args:
         name: Full name of the person to research.
         linkedin_url: Optional LinkedIn profile URL for richer data.
         meeting_context: Optional context about the meeting purpose.
+        is_self_lookup: True if researching the authenticated user themselves.
         dossier_id: Session identifier. Use the chat session ID.
 
     Returns:
@@ -309,6 +372,7 @@ async def dossier_generate(
         name=name,
         linkedin_url=linkedin_url,
         meeting_context=meeting_context,
+        is_self_lookup=is_self_lookup,
     )
 
 
@@ -363,6 +427,28 @@ async def dossier_get_document(dossier_id: str = "default") -> str:
     return document
 
 
+@tool
+async def dossier_delete(dossier_id: str = "default") -> str:
+    """Delete a dossier session and free its resources.
+
+    Use this when a dossier is no longer needed, or to start fresh
+    before generating a new dossier for the same session.
+
+    Args:
+        dossier_id: Session identifier for the dossier to delete.
+
+    Returns:
+        Confirmation message.
+    """
+    session = _dossier_sessions.get(dossier_id)
+    if session is None:
+        return f"No dossier session found with ID '{dossier_id}'."
+
+    name = session.get("name", "Unknown")
+    _clear_session(dossier_id)
+    return f"Dossier session for '{name}' (ID: {dossier_id}) has been deleted."
+
+
 def get_dossier_tools() -> list:
     """
     Get all Dossier-related LangChain tools for integration into the main agent.
@@ -375,4 +461,5 @@ def get_dossier_tools() -> list:
         dossier_generate,
         dossier_update,
         dossier_get_document,
+        dossier_delete,
     ]
