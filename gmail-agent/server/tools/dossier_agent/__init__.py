@@ -27,11 +27,14 @@ from .dossier_agent import (
     dossier_generate,
     dossier_update,
     dossier_get_document,
+    dossier_delete,
     get_dossier_tools,
     _dossier_sessions,
     _get_session,
     _create_session,
     _clear_session,
+    _cleanup_expired_sessions,
+    SESSION_TTL_SECONDS,
 )
 from .data_collector import (
     DataCollector,
@@ -40,10 +43,19 @@ from .data_collector import (
     WebSearchResult,
     SerperClient,
     LinkedInScraper,
+    ComposioLinkedInClient,
 )
 from .research_synthesizer import ResearchSynthesizer, SynthesizedResearch
 from .strategic_analyzer import StrategicAnalyzer, StrategicInsights
 from .dossier_generator import DossierGenerator
+from .exceptions import (
+    DossierError,
+    DossierCollectionError,
+    DossierSynthesisError,
+    DossierAnalysisError,
+    DossierGenerationError,
+    DossierSessionError,
+)
 
 __all__ = [
     # Orchestrator & tools
@@ -52,12 +64,15 @@ __all__ = [
     "dossier_generate",
     "dossier_update",
     "dossier_get_document",
+    "dossier_delete",
     "get_dossier_tools",
     # Session store helpers
     "_dossier_sessions",
     "_get_session",
     "_create_session",
     "_clear_session",
+    "_cleanup_expired_sessions",
+    "SESSION_TTL_SECONDS",
     # Data collection
     "DataCollector",
     "CollectedData",
@@ -65,6 +80,7 @@ __all__ = [
     "WebSearchResult",
     "SerperClient",
     "LinkedInScraper",
+    "ComposioLinkedInClient",
     # Research synthesis
     "ResearchSynthesizer",
     "SynthesizedResearch",
@@ -73,4 +89,11 @@ __all__ = [
     "StrategicInsights",
     # Document generation
     "DossierGenerator",
+    # Exceptions
+    "DossierError",
+    "DossierCollectionError",
+    "DossierSynthesisError",
+    "DossierAnalysisError",
+    "DossierGenerationError",
+    "DossierSessionError",
 ]
