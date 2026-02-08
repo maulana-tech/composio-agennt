@@ -20,6 +20,7 @@ Modules:
 
 from .gipa_agent import (
     GIPARequestAgent,
+    gipa_check_status,
     gipa_start_request,
     gipa_process_answer,
     gipa_generate_document,
@@ -39,6 +40,7 @@ from .jurisdiction_config import (
 
 __all__ = [
     "GIPARequestAgent",
+    "gipa_check_status",
     "gipa_start_request",
     "gipa_process_answer",
     "gipa_generate_document",
