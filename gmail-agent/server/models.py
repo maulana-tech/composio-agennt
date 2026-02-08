@@ -178,3 +178,59 @@ class GIPAResponse(BaseModel):
     status: Optional[str] = None
     document: Optional[str] = None
     error: Optional[str] = None
+
+
+# ========== Dossier Models ==========
+
+
+class DossierGenerateRequest(BaseModel):
+    name: str
+    linkedin_url: str = Field(default="")
+    meeting_context: str = Field(default="")
+    dossier_id: str = Field(default="default")
+
+
+class DossierUpdateRequest(BaseModel):
+    additional_context: str
+    dossier_id: str = Field(default="default")
+
+
+class DossierStatusRequest(BaseModel):
+    dossier_id: str = Field(default="default")
+
+
+class DossierResponse(BaseModel):
+    success: bool
+    message: str
+    status: Optional[str] = None
+    document: Optional[str] = None
+    error: Optional[str] = None
+
+
+# ========== LinkedIn Models ==========
+
+
+class LinkedInPostRequest(BaseModel):
+    user_id: str = Field(default="default")
+    author: str
+    commentary: str
+    visibility: str = Field(default="PUBLIC")
+    lifecycle_state: str = Field(default="PUBLISHED")
+    is_reshare_disabled: bool = Field(default=False)
+
+
+class LinkedInDeletePostRequest(BaseModel):
+    user_id: str = Field(default="default")
+    share_id: str
+
+
+class LinkedInMyInfoRequest(BaseModel):
+    user_id: str = Field(default="default")
+
+
+class LinkedInCompanyInfoRequest(BaseModel):
+    user_id: str = Field(default="default")
+    count: Optional[int] = None
+    role: Optional[str] = None
+    start: Optional[int] = None
+    state: Optional[str] = None
