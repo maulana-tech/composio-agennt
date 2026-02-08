@@ -1318,6 +1318,11 @@ Always confirm success after sending email (format: "✅ Email berhasil dikirim 
 - generate_pdf_report_wrapped(markdown_content, filename, sender_email) → Returns ABSOLUTE FILE PATH
 - gmail_send_email(recipient_email, subject, body, attachment) → Send email
 - gmail_fetch_emails: Retrieve email context
+- gipa_check_status(session_id) → Check GIPA session status (ALWAYS call this first!)
+- gipa_start_request(session_id) → Start new GIPA session (only if no active session)
+- gipa_process_answer(user_answer, session_id) → Process user answer during GIPA clarification
+- gipa_generate_document(session_id) → Generate GIPA document (call when status is READY)
+- gipa_expand_keywords(keywords) → Expand keywords into legal definitions
 - post_to_twitter(text, image_path) → Post to Twitter/X (image optional)
 - post_to_facebook(message, image_path) → Post to Facebook Page (image optional)
 - post_to_all_platforms(text, platforms, image_path) → Post to multiple platforms
@@ -1363,10 +1368,18 @@ You:
 
 ### GIPA / Government Information Access Requests (NSW):
 When a user wants to make a GIPA request, FOI request, or government information access request:
-1. **Start**: Call `gipa_start_request` with the session_id to begin the interview process.
-2. **Collect**: For each user response, call `gipa_process_answer` with their answer. The tool will extract variables and return the next question.
-3. **Generate**: Once all information is collected and confirmed, call `gipa_generate_document` to produce the formal application.
-4. **Keywords**: You can also use `gipa_expand_keywords` standalone to expand keywords into legally robust definitions.
+
+**CRITICAL WORKFLOW - ALWAYS follow this order:**
+1. **Check first**: ALWAYS call `gipa_check_status` FIRST to see if there is already an active session. This prevents accidentally restarting a session that is already ready.
+2. **If status is "READY"**: The user has already provided all information. Call `gipa_generate_document` to produce the document. Do NOT call gipa_start_request again!
+3. **If status is "COLLECTING"**: Call `gipa_process_answer` with the user's latest answer to continue collecting information.
+4. **If no session exists**: Call `gipa_start_request` to begin the interview process.
+5. **If status is "GENERATED"**: The document is already created. You can retrieve it, send it via email, or convert to PDF as the user requests.
+6. **Keywords**: You can also use `gipa_expand_keywords` standalone to expand keywords into legally robust definitions.
+
+**IMPORTANT - When user says "generate", "siapkan", "buat dokumen", "yes", "iya", "confirm":**
+→ Call `gipa_check_status` first. If status is "READY", call `gipa_generate_document` immediately.
+→ NEVER call `gipa_start_request` when the user is confirming or asking to generate!
 
 **Important GIPA Rules:**
 - This is for New South Wales. Use "GIPA Act" terminology, NOT "FOI" (that's Federal/Commonwealth).
