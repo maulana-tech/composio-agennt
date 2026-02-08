@@ -269,6 +269,7 @@ class ProfessionalPDF(FPDF, HTMLMixin):
 
     def add_numbered_item(self, number: int, text: str):
         """Add a numbered list item."""
+        self.set_x(self.l_margin)
         self.set_font("helvetica", "B", 11)
         self.set_text_color(*self.primary_color)
         self.cell(10, 6, f"{number}.", ln=False)
