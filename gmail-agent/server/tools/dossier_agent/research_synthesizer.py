@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from .exceptions import DossierSynthesisError
+
 
 # ---------------------------------------------------------------------------
 # Synthesis Output Model
@@ -30,6 +32,7 @@ class SynthesizedResearch:
     """Structured output from the Gemini research synthesis step."""
 
     name: str = ""
+    linkedin_url: str = ""
     current_role: str = ""
     organization: str = ""
     location: str = ""
@@ -47,6 +50,7 @@ class SynthesizedResearch:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
+            "linkedin_url": self.linkedin_url,
             "current_role": self.current_role,
             "organization": self.organization,
             "location": self.location,
@@ -64,6 +68,7 @@ class SynthesizedResearch:
     def from_dict(cls, data: Dict[str, Any]) -> "SynthesizedResearch":
         return cls(
             name=data.get("name", ""),
+            linkedin_url=data.get("linkedin_url", ""),
             current_role=data.get("current_role", ""),
             organization=data.get("organization", ""),
             location=data.get("location", ""),
@@ -144,11 +149,14 @@ class ResearchSynthesizer:
         self, google_api_key: Optional[str] = None, model: str = "gemini-2.0-flash"
     ):
         api_key = google_api_key or os.environ.get("GOOGLE_API_KEY")
-        self.llm = ChatGoogleGenerativeAI(
-            model=model,
-            temperature=0.1,
-            google_api_key=api_key,
-        )
+        if api_key:
+            self.llm = ChatGoogleGenerativeAI(
+                model=model,
+                temperature=0.1,
+                google_api_key=api_key,
+            )
+        else:
+            self.llm = None
 
     async def synthesize(self, collected_data: Dict[str, Any]) -> SynthesizedResearch:
         """
@@ -160,6 +168,8 @@ class ResearchSynthesizer:
         Returns:
             SynthesizedResearch with structured fields.
         """
+        if not self.llm:
+            return self._fallback_synthesis(collected_data)
         # Format LinkedIn data
         linkedin_profile = collected_data.get("linkedin_profile")
         if linkedin_profile:
@@ -211,18 +221,85 @@ class ResearchSynthesizer:
                 content = "\n".join(lines)
 
             parsed = json.loads(content)
-            return SynthesizedResearch.from_dict(parsed)
+            result = SynthesizedResearch.from_dict(parsed)
+            # Preserve linkedin_url from collected data (LLM won't return it)
+            result.linkedin_url = collected_data.get("linkedin_url", "")
+            return result
 
         except json.JSONDecodeError as e:
             print(f"Failed to parse Gemini synthesis response as JSON: {e}")
             # Return a minimal result with the raw text as biography
             return SynthesizedResearch(
                 name=collected_data.get("name", "Unknown"),
+                linkedin_url=collected_data.get("linkedin_url", ""),
                 biographical_summary=f"[Synthesis parse error] Raw response:\n{content[:500]}",
             )
         except Exception as e:
             print(f"Research synthesis error: {e}")
-            return SynthesizedResearch(
-                name=collected_data.get("name", "Unknown"),
-                biographical_summary=f"Research synthesis failed: {str(e)}",
+            raise DossierSynthesisError(f"Research synthesis failed: {e}") from e
+
+    def _fallback_synthesis(
+        self, collected_data: Dict[str, Any]
+    ) -> SynthesizedResearch:
+        """
+        Generate basic synthesis without the LLM.
+        Extracts what we can directly from the collected data.
+        """
+        name = collected_data.get("name", "Unknown")
+        linkedin_url = collected_data.get("linkedin_url", "")
+        linkedin_profile = collected_data.get("linkedin_profile") or {}
+
+        # Extract from LinkedIn profile if available
+        current_role = linkedin_profile.get("headline", "")
+        location = linkedin_profile.get("location", "")
+        summary = linkedin_profile.get("summary", "")
+
+        # Build bio from web snippets
+        bio_results = collected_data.get("web_results", {}).get("bio", [])
+        bio_snippets = [r.get("snippet", "") for r in bio_results if r.get("snippet")]
+        biographical_summary = summary or " ".join(bio_snippets[:3])
+
+        # Extract statements from web results
+        statement_results = collected_data.get("web_results", {}).get("statements", [])
+        recent_statements = []
+        for r in statement_results[:5]:
+            recent_statements.append(
+                {
+                    "quote": r.get("snippet", ""),
+                    "source": r.get("title", ""),
+                    "date": r.get("date", ""),
+                    "context": "",
+                }
             )
+
+        # Extract associates from web results
+        associate_results = collected_data.get("web_results", {}).get("associates", [])
+        known_associates = []
+        for r in associate_results[:5]:
+            known_associates.append(
+                {
+                    "name": r.get("title", ""),
+                    "relationship": "mentioned together",
+                    "context": r.get("snippet", ""),
+                }
+            )
+
+        # Extract topics from news results
+        news_results = collected_data.get("web_results", {}).get("news", [])
+        key_topics = []
+        for r in news_results[:5]:
+            if r.get("title"):
+                key_topics.append(r["title"])
+
+        return SynthesizedResearch(
+            name=name,
+            linkedin_url=linkedin_url,
+            current_role=current_role,
+            location=location,
+            biographical_summary=biographical_summary
+            if biographical_summary
+            else f"No detailed biography available for {name}.",
+            recent_statements=recent_statements,
+            known_associates=known_associates,
+            key_topics=key_topics,
+        )
