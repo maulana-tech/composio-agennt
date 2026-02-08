@@ -21,6 +21,7 @@ from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
 from server.tools.avatar_quote_generator import generate_quote_with_person_photo
 from server.tools.social_media_poster import get_social_media_tools
 from server.tools.gipa_agent import get_gipa_tools
+from server.tools.dossier_agent import get_dossier_tools
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -726,6 +727,76 @@ def get_agent_tools(user_id: str):
 
     gmail_tools = [gmail_send_email, gmail_create_draft, gmail_fetch_emails]
 
+    # --- LinkedIn Tools (Composio) ---
+
+    @tool("LINKEDIN_GET_MY_INFO")
+    def linkedin_get_my_info() -> str:
+        """Fetch the authenticated LinkedIn user's profile info including author_id (URN) needed for posting."""
+        try:
+            return composio_client.tools.execute(
+                slug="LINKEDIN_GET_MY_INFO",
+                arguments={},
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
+        except Exception as e:
+            return f"Error fetching LinkedIn info: {str(e)}"
+
+    @tool("LINKEDIN_CREATE_POST")
+    def linkedin_create_post(
+        author: str, commentary: str, visibility: str = "PUBLIC"
+    ) -> str:
+        """Create a post on LinkedIn. Author must be a URN (get it from linkedin_get_my_info first). Visibility: PUBLIC, CONNECTIONS, LOGGED_IN."""
+        try:
+            args = {
+                "author": author,
+                "commentary": commentary,
+                "visibility": visibility,
+                "lifecycleState": "PUBLISHED",
+            }
+            return composio_client.tools.execute(
+                slug="LINKEDIN_CREATE_LINKED_IN_POST",
+                arguments=args,
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
+        except Exception as e:
+            return f"Error creating LinkedIn post: {str(e)}"
+
+    @tool("LINKEDIN_DELETE_POST")
+    def linkedin_delete_post(share_id: str) -> str:
+        """Delete a LinkedIn post by its share ID."""
+        try:
+            return composio_client.tools.execute(
+                slug="LINKEDIN_DELETE_LINKED_IN_POST",
+                arguments={"share_id": share_id},
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
+        except Exception as e:
+            return f"Error deleting LinkedIn post: {str(e)}"
+
+    @tool("LINKEDIN_GET_COMPANY_INFO")
+    def linkedin_get_company_info(role: str = "ADMINISTRATOR") -> str:
+        """Get LinkedIn organizations/company pages where the user has admin or content posting roles."""
+        try:
+            args = {"role": role}
+            return composio_client.tools.execute(
+                slug="LINKEDIN_GET_COMPANY_INFO",
+                arguments=args,
+                user_id=user_id,
+                dangerously_skip_version_check=True,
+            )
+        except Exception as e:
+            return f"Error fetching company info: {str(e)}"
+
+    linkedin_tools = [
+        linkedin_get_my_info,
+        linkedin_create_post,
+        linkedin_delete_post,
+        linkedin_get_company_info,
+    ]
+
     # Search Tools
     serper_tools = create_serper_tools()
     search_tools = create_grounding_tools()
@@ -822,6 +893,9 @@ def get_agent_tools(user_id: str):
     # GIPA (Government Information Public Access) Tools
     gipa_tools = get_gipa_tools()
 
+    # Dossier (Meeting Prep) Tools
+    dossier_tools = get_dossier_tools()
+
     return (
         serper_tools
         + search_tools
@@ -830,24 +904,9 @@ def get_agent_tools(user_id: str):
         + social_media_tools
         + strategy_tools
         + gipa_tools
+        + dossier_tools
         + gmail_tools
-    )
-
-    social_media_tools = [
-        post_to_twitter,
-        post_to_facebook,
-        post_to_all_platforms,
-        get_facebook_page_id,
-        upload_media_to_twitter,
-    ]
-
-    return (
-        serper_tools
-        + search_tools
-        + [generate_pdf_report_wrapped]
-        + quote_tools
-        + social_media_tools
-        + gmail_tools
+        + linkedin_tools
     )
 
 
@@ -1323,11 +1382,20 @@ Always confirm success after sending email (format: "✅ Email berhasil dikirim 
 - gipa_process_answer(user_answer, session_id) → Process user answer during GIPA clarification
 - gipa_generate_document(session_id) → Generate GIPA document (call when status is READY)
 - gipa_expand_keywords(keywords) → Expand keywords into legal definitions
+- dossier_check_status(dossier_id) → Check dossier/meeting prep session status (ALWAYS call first!)
+- dossier_generate(name, linkedin_url, meeting_context, is_self_lookup, dossier_id) → Generate meeting prep dossier. Set is_self_lookup=True if the user is researching THEMSELVES (uses Composio LinkedIn for rich profile data). Leave False for researching other people (uses web search).
+- dossier_update(additional_context, dossier_id) → Update existing dossier with new context
+- dossier_get_document(dossier_id) → Retrieve full generated dossier document
+- dossier_delete(dossier_id) → Delete a dossier session and free resources
 - post_to_twitter(text, image_path) → Post to Twitter/X (image optional)
 - post_to_facebook(message, image_path) → Post to Facebook Page (image optional)
 - post_to_all_platforms(text, platforms, image_path) → Post to multiple platforms
 - get_facebook_page_id: Get default Facebook Page ID
 - upload_media_to_twitter(image_path): Upload media to Twitter first
+- linkedin_get_my_info → Get authenticated user's LinkedIn profile and author_id URN
+- linkedin_create_post(author, commentary, visibility) → Create a LinkedIn post
+- linkedin_delete_post(share_id) → Delete a LinkedIn post
+- linkedin_get_company_info(role) → Get company pages user manages
 
 ## STRATEGY DIAGRAM TOOLS (IMPORTANT):
 - create_strategy_diagram(prompt, format_type, style) → Generate complete strategy diagram
@@ -1387,6 +1455,37 @@ When a user wants to make a GIPA request, FOI request, or government information
 - Always pass through the full clarification phase - do not skip questions.
 - The generated document can be sent via email or converted to PDF using the existing PDF tools.
 
+### DOSSIER / Meeting Prep / Person Research:
+When a user wants a meeting prep dossier, background brief, or person research:
+
+**CRITICAL WORKFLOW - ALWAYS follow this order:**
+1. **Check first**: ALWAYS call `dossier_check_status` FIRST to see if there is already an active dossier session.
+2. **If status is "generated"**: The dossier is ready. Use `dossier_get_document` to retrieve it.
+3. **If status is "collecting"/"researching"/"analyzing"**: The dossier is still being generated. Inform the user and wait.
+4. **If no session exists**: Call `dossier_generate` with the person's name, optional LinkedIn URL, and meeting context. If the user is researching THEMSELVES, set `is_self_lookup=True` to use their connected LinkedIn account for rich profile data.
+5. **To update**: Use `dossier_update` to add new meeting context and regenerate strategic insights without re-collecting data.
+6. **To delete**: Use `dossier_delete` to remove a dossier session and free resources.
+
+**Important Dossier Rules:**
+- The dossier includes: biographical context, career highlights, recent statements, known associates, relationship map, conversation starters, common ground, topics to avoid, and meeting strategy.
+- Always ask for the person's full name at minimum. LinkedIn URL and meeting context are optional but improve results.
+- The generated dossier can be sent via email or converted to PDF using the existing PDF tools.
+
+### LinkedIn Integration:
+When a user wants to post on LinkedIn or manage LinkedIn content:
+
+**CRITICAL WORKFLOW - ALWAYS follow this order:**
+1. **Get author info first**: ALWAYS call `linkedin_get_my_info` FIRST to get the user's author_id (URN). This is REQUIRED for creating posts.
+2. **Create post**: Use `linkedin_create_post` with the author URN from step 1, the post text, and visibility (default: PUBLIC).
+3. **For company posts**: Call `linkedin_get_company_info` first to get the organization URN, then use that as the author parameter.
+4. **Delete post**: Use `linkedin_delete_post` with the share_id of the post to delete.
+
+**Important LinkedIn Rules:**
+- ALWAYS get the author URN via `linkedin_get_my_info` before creating a post. Never guess the URN.
+- For organization posts, the author URN format is 'urn:li:organization:{id}'.
+- Default visibility is PUBLIC. Ask user if they want CONNECTIONS-only visibility.
+- The post commentary supports plain text and @-mentions.
+
 ## QUALITY STANDARDS:
 - PDF Reports: Minimum 3-5 pages of substantial content
 - Political Analysis: Minimum 5 quotes with full citations
@@ -1424,6 +1523,10 @@ async def chat(
         r"\b(dokumen|document|file|word|excel|csv|presentasi|presentation|slide|export|save|simpan|arsip|archive)\b",
         # GIPA / FOI / Government Information Access keywords
         r"\b(gipa|foi|freedom of information|government information|public access|information request|information access|right to information|rti)\b",
+        # Dossier / Meeting Prep keywords
+        r"\b(dossier|meeting prep|meeting preparation|briefing|background check|profile research|profil|person research|relationship map)\b",
+        # LinkedIn posting/management keywords
+        r"\b(linkedin|linked in|post on linkedin|linkedin post|linkedin article|linkedin connection|linkedin company|linkedin profile)\b",
     ]
 
     # Check for explicit tool intent
