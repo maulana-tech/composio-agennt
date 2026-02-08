@@ -170,7 +170,7 @@ def build_scope_and_definitions(
     Returns:
         Formatted Scope and Definitions section as a string.
     """
-    lines = ["## Scope and Definitions", "", "The above search terms\u2014", ""]
+    lines = ["## Scope and Definitions", "", "The above search terms -", ""]
 
     # 1. Record definition
     lines.append(f"1. {get_record_definition(config)}")
