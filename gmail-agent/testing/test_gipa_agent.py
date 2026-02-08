@@ -55,6 +55,7 @@ from server.tools.gipa_agent.gipa_agent import (
     _get_or_create_session,
     _clear_session,
     get_gipa_tools,
+    gipa_check_status,
 )
 
 
@@ -866,14 +867,15 @@ class TestGIPARequestAgent:
 
 
 class TestToolExports:
-    def test_get_gipa_tools_returns_four(self):
+    def test_get_gipa_tools_returns_five(self):
         tools = get_gipa_tools()
-        assert len(tools) == 4
+        assert len(tools) == 5
 
     def test_tool_names(self):
         tools = get_gipa_tools()
         names = {t.name for t in tools}
         assert names == {
+            "gipa_check_status",
             "gipa_start_request",
             "gipa_process_answer",
             "gipa_generate_document",
@@ -884,6 +886,78 @@ class TestToolExports:
         tools = get_gipa_tools()
         for t in tools:
             assert t.description and len(t.description) > 20
+
+
+# ============================================================================
+# 8b. Check Status Tool Tests
+# ============================================================================
+
+
+class TestCheckStatusTool:
+    """Tests for gipa_check_status tool."""
+
+    def setup_method(self):
+        _gipa_sessions.clear()
+
+    @pytest.mark.asyncio
+    async def test_no_session_returns_no_active(self):
+        result = await gipa_check_status.ainvoke({"session_id": "nonexistent"})
+        assert "No active GIPA session" in result
+
+    @pytest.mark.asyncio
+    async def test_collecting_session(self):
+        _gipa_sessions["s1"] = {
+            "data": {"agency_name": "DPI"},
+            "context": "",
+            "status": "collecting",
+            "document": None,
+        }
+        result = await gipa_check_status.ainvoke({"session_id": "s1"})
+        assert "COLLECTING" in result
+        assert "agency_name" in result
+
+    @pytest.mark.asyncio
+    async def test_ready_session(self):
+        _gipa_sessions["s2"] = {
+            "data": {
+                "agency_name": "DPI",
+                "applicant_name": "Jane",
+                "keywords": ["koala", "habitat"],
+            },
+            "context": "",
+            "status": "ready",
+            "document": None,
+        }
+        result = await gipa_check_status.ainvoke({"session_id": "s2"})
+        assert "READY" in result
+        assert "gipa_generate_document" in result
+        assert "DPI" in result
+        assert "Jane" in result
+        assert "koala" in result
+
+    @pytest.mark.asyncio
+    async def test_generated_session(self):
+        _gipa_sessions["s3"] = {
+            "data": {},
+            "context": "",
+            "status": "generated",
+            "document": "# GIPA Application\nFull document here...",
+        }
+        result = await gipa_check_status.ainvoke({"session_id": "s3"})
+        assert "GENERATED" in result
+        assert "GIPA Application" in result
+
+    @pytest.mark.asyncio
+    async def test_collecting_no_fields(self):
+        _gipa_sessions["s4"] = {
+            "data": {},
+            "context": "",
+            "status": "collecting",
+            "document": None,
+        }
+        result = await gipa_check_status.ainvoke({"session_id": "s4"})
+        assert "COLLECTING" in result
+        assert "none" in result
 
 
 # ============================================================================
