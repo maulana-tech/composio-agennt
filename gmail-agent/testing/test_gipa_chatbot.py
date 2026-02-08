@@ -852,6 +852,6 @@ class TestSystemPrompt:
     def test_system_prompt_has_workflow_steps(self):
         from server.chatbot import SYSTEM_PROMPT
 
-        assert "Start" in SYSTEM_PROMPT
-        assert "Collect" in SYSTEM_PROMPT
-        assert "Generate" in SYSTEM_PROMPT
+        assert "Check first" in SYSTEM_PROMPT
+        assert "gipa_check_status" in SYSTEM_PROMPT
+        assert "READY" in SYSTEM_PROMPT
