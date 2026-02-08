@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from .exceptions import DossierAnalysisError
+
 
 # ---------------------------------------------------------------------------
 # Strategic Output Model
@@ -257,7 +259,7 @@ class StrategicAnalyzer:
             return self._fallback_insights(synthesized_data)
         except Exception as e:
             print(f"Strategic analysis error: {e}")
-            return self._fallback_insights(synthesized_data)
+            raise DossierAnalysisError(f"Strategic analysis failed: {e}") from e
 
     def _fallback_insights(self, synthesized_data: Dict[str, Any]) -> StrategicInsights:
         """
