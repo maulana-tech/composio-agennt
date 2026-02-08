@@ -99,7 +99,7 @@ class GIPADocumentGenerator:
         lines.extend(
             [
                 "",
-                f"**RE: {config.act_name} ({config.act_short_name}) \u2014 Information Request**",
+                f"**RE: {config.act_name} ({config.act_short_name}) - Information Request**",
                 "",
                 "Dear Right to Information Officer,",
                 "",
@@ -160,7 +160,7 @@ class GIPADocumentGenerator:
         ]
 
         # 1. Date Range
-        lines.append(f"1. **Date Range:** {data.start_date} to {data.end_date}.")
+        lines.append(f"1. Date Range: {data.start_date} to {data.end_date}.")
         lines.append("")
 
         item_num = 2
@@ -174,19 +174,19 @@ class GIPADocumentGenerator:
                 item_num += 1
         else:
             lines.append(
-                f"{item_num}. **Parties:** All officers and staff of {data.agency_name}."
+                f"{item_num}. Parties: All officers and staff of {data.agency_name}."
             )
             lines.append("")
             item_num += 1
 
         # 3. Keywords (Boolean AND)
         if len(data.keywords) == 1:
-            keyword_clause = f'containing the word **"{data.keywords[0]}"**'
+            keyword_clause = f'containing the word "{data.keywords[0]}"'
         else:
             formatted_kws = [f'"{kw}"' for kw in data.keywords]
-            keyword_clause = f"containing the words **{' AND '.join(formatted_kws)}**"
+            keyword_clause = f"containing the words {' AND '.join(formatted_kws)}"
 
-        lines.append(f"{item_num}. **Keywords:** All correspondence {keyword_clause}.")
+        lines.append(f"{item_num}. Keywords: All correspondence {keyword_clause}.")
         lines.append("")
 
         return "\n".join(lines)
@@ -198,11 +198,11 @@ class GIPADocumentGenerator:
             name_str = f"{target.name} ({target.role})"
 
         if target.direction == "sender":
-            return f"**Sender:** All correspondence sent **from** {name_str}."
+            return f"Sender: All correspondence sent from {name_str}."
         elif target.direction == "receiver":
-            return f"**Receiver:** All correspondence sent **to** {name_str}."
+            return f"Receiver: All correspondence sent to {name_str}."
         else:
-            return f"**Party:** All correspondence involving {name_str} (as sender or receiver)."
+            return f"Party: All correspondence involving {name_str} (as sender or receiver)."
 
     def _build_closing(self, data: GIPARequestData) -> str:
         """Build the closing section of the document."""
