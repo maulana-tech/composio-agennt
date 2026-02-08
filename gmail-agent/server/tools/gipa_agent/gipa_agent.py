@@ -344,6 +344,60 @@ async def gipa_generate_document(session_id: str = "default") -> str:
 
 
 @tool
+async def gipa_check_status(session_id: str = "default") -> str:
+    """Check the current status of a GIPA request session.
+
+    Call this tool FIRST when the user mentions GIPA and there may already be
+    an active session.  This tells you whether to continue collecting answers,
+    generate the document, or start a new session.
+
+    Args:
+        session_id: Session identifier to check.
+
+    Returns:
+        A status string describing the session state and collected data so far.
+    """
+    session = _gipa_sessions.get(session_id)
+    if session is None:
+        return "No active GIPA session found. Call gipa_start_request to begin."
+
+    status = session.get("status", "unknown")
+    data = session.get("data", {})
+
+    if status == "generated":
+        doc_preview = (session.get("document") or "")[:200]
+        return (
+            f"Session status: GENERATED. The document has already been created.\n"
+            f"Preview: {doc_preview}...\n"
+            f"If the user needs the full document, it is stored in the session. "
+            f"If they want to start a new request, call gipa_start_request."
+        )
+
+    if status == "ready":
+        summary_parts = []
+        if data.get("agency_name"):
+            summary_parts.append(f"Agency: {data['agency_name']}")
+        if data.get("applicant_name"):
+            summary_parts.append(f"Applicant: {data['applicant_name']}")
+        if data.get("keywords"):
+            summary_parts.append(f"Keywords: {', '.join(data['keywords'])}")
+        summary = "; ".join(summary_parts) if summary_parts else "Data collected"
+        return (
+            f"Session status: READY. All information has been collected.\n"
+            f"Collected data: {summary}\n"
+            f"The user has confirmed the data. Call gipa_generate_document to produce the formal application."
+        )
+
+    # status == "collecting"
+    filled = [k for k, v in data.items() if v]
+    return (
+        f"Session status: COLLECTING. Still gathering information.\n"
+        f"Fields collected so far: {', '.join(filled) if filled else 'none'}\n"
+        f"Call gipa_process_answer with the user's next response to continue."
+    )
+
+
+@tool
 async def gipa_expand_keywords(keywords: str) -> str:
     """Expand keywords into legally robust definitions for a GIPA/FOI request.
 
@@ -383,6 +437,7 @@ def get_gipa_tools() -> list:
         List of LangChain tool objects.
     """
     return [
+        gipa_check_status,
         gipa_start_request,
         gipa_process_answer,
         gipa_generate_document,
