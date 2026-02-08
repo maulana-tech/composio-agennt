@@ -803,13 +803,15 @@ def create_app() -> FastAPI:
         """Process a user's answer during GIPA clarification and return the next question."""
         try:
             from .tools.gipa_agent import GIPARequestAgent
+            from .tools.gipa_agent.gipa_agent import _gipa_sessions
 
             agent = GIPARequestAgent()
             message = await agent.process_answer(request.session_id, request.answer)
+            session = _gipa_sessions.get(request.session_id, {})
             return GIPAResponse(
                 success=True,
                 message=message,
-                status="collecting",
+                status=session.get("status", "collecting"),
             )
         except Exception as e:
             return GIPAResponse(success=False, message="", error=str(e))
@@ -819,15 +821,27 @@ def create_app() -> FastAPI:
         """Generate the formal GIPA application document from collected data."""
         try:
             from .tools.gipa_agent import GIPARequestAgent
+            from .tools.gipa_agent.gipa_agent import _gipa_sessions
 
             agent = GIPARequestAgent()
             document = await agent.generate_document(request.session_id)
-            return GIPAResponse(
-                success=True,
-                message="GIPA application generated successfully.",
-                status="generated",
-                document=document,
-            )
+
+            # Check if the result is an error (not a real document)
+            session = _gipa_sessions.get(request.session_id, {})
+            if session.get("status") == "generated":
+                return GIPAResponse(
+                    success=True,
+                    message="GIPA application generated successfully.",
+                    status="generated",
+                    document=document,
+                )
+            else:
+                return GIPAResponse(
+                    success=False,
+                    message=document,  # contains the error details
+                    status=session.get("status", "collecting"),
+                    error=document,
+                )
         except Exception as e:
             return GIPAResponse(success=False, message="", error=str(e))
 
