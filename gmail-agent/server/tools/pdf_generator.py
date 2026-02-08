@@ -161,14 +161,17 @@ class ProfessionalPDF(FPDF, HTMLMixin):
         self.set_font("helvetica", "", 8)
         self.set_text_color(*self.secondary_color)
 
-        # Left: Report info
-        self.cell(0, 5, f"{self.report_title}", ln=False, align="L")
+        # Left: Report info (truncate long titles to prevent overflow)
+        footer_title = self.report_title
+        if len(footer_title) > 50:
+            footer_title = footer_title[:47] + "..."
+        self.cell(0, 5, footer_title, ln=False, align="L")
 
         # Center: Generation date
         self.cell(
             0,
             5,
-            f"Generated: {datetime.now().strftime('%B %d, %Y at %H:%M')}",
+            f"Generated: {datetime.now().strftime('%B %d, %Y')}",
             ln=False,
             align="C",
         )
@@ -181,53 +184,96 @@ class ProfessionalPDF(FPDF, HTMLMixin):
         self.add_page()
 
         # Large top spacing
-        self.ln(60)
+        self.ln(50)
 
-        # Main title
-        self.set_font("helvetica", "B", 28)
-        self.set_text_color(*self.primary_color)
-        self.cell(0, 15, title, ln=True, align="C")
+        # Check if this is a dossier-style title ("Meeting Prep Dossier: Name")
+        is_dossier = title.startswith("Meeting Prep Dossier:")
+        if is_dossier:
+            person_name = title.split(":", 1)[1].strip()
+
+            # Category label
+            self.set_font("helvetica", "", 13)
+            self.set_text_color(*self.accent_color)
+            self.cell(0, 10, "MEETING PREP DOSSIER", ln=True, align="C")
+
+            self.ln(6)
+
+            # Decorative line above name
+            self.set_fill_color(*self.border_color)
+            self.rect(50, self.get_y(), 110, 0.5, "F")
+            self.ln(8)
+
+            # Person name - large and prominent, wrapped
+            self.set_font("helvetica", "B", 26)
+            self.set_text_color(*self.primary_color)
+            self.multi_cell(0, 14, person_name, align="C")
+
+            # Decorative line below name
+            self.ln(4)
+            self.set_fill_color(*self.accent_color)
+            self.rect(70, self.get_y(), 70, 2, "F")
+            self.ln(4)
+            self.set_fill_color(*self.border_color)
+            self.rect(50, self.get_y(), 110, 0.5, "F")
+
+        else:
+            # Generic report title - use multi_cell so long titles wrap
+            self.set_font("helvetica", "B", 26)
+            self.set_text_color(*self.primary_color)
+            self.multi_cell(0, 14, title, align="C")
+
+            # Decorative element
+            self.ln(6)
+            self.set_fill_color(*self.accent_color)
+            self.rect(75, self.get_y(), 60, 2, "F")
 
         # Subtitle
         if subtitle:
-            self.ln(5)
-            self.set_font("helvetica", "", 14)
+            self.ln(10)
+            self.set_font("helvetica", "", 13)
             self.set_text_color(*self.secondary_color)
             self.cell(0, 10, subtitle, ln=True, align="C")
 
-        # Decorative element
-        self.ln(10)
-        self.set_fill_color(*self.accent_color)
-        x_center = 105 - 30  # Center 60mm wide bar
-        self.rect(x_center, self.get_y(), 60, 2, "F")
-
         # Metadata section
         if metadata:
-            self.ln(20)
-            self.set_font("helvetica", "", 11)
-            self.set_text_color(*self.secondary_color)
+            self.ln(15)
+            self.set_font("helvetica", "", 10)
+            self.set_text_color(120, 120, 120)
 
             for key, value in metadata.items():
-                self.ln(5)
+                self.ln(4)
                 self.cell(0, 6, f"{key}: {value}", ln=True, align="C")
 
         # Bottom note
-        self.ln(30)
+        self.ln(25)
         self.set_font("helvetica", "I", 10)
-        self.set_text_color(128, 128, 128)
-        self.cell(0, 8, "Confidential Research Report", ln=True, align="C")
-        self.cell(0, 8, "Powered by AI with Google Grounding", ln=True, align="C")
+        self.set_text_color(160, 160, 160)
+        if is_dossier:
+            self.cell(
+                0,
+                8,
+                "Confidential -- For internal meeting preparation only",
+                ln=True,
+                align="C",
+            )
+        else:
+            self.cell(0, 8, "Confidential Research Report", ln=True, align="C")
+        self.cell(0, 8, "Powered by AI Research Assistant", ln=True, align="C")
 
     def add_heading1(self, text: str):
         """Add H1 heading."""
         self.ln(8)
         self.set_font("helvetica", "B", 18)
         self.set_text_color(*self.primary_color)
-        self.cell(0, 12, text, ln=True)
+        # Use multi_cell so long headings wrap instead of being clipped
+        y_before = self.get_y()
+        self.multi_cell(0, 12, text)
+        y_after = self.get_y()
 
-        # Underline
+        # Underline (proportional to text width, max 60mm)
         self.set_fill_color(*self.accent_color)
-        self.rect(10, self.get_y() - 2, 40, 1, "F")
+        underline_w = min(60, max(40, self.get_string_width(text[:30])))
+        self.rect(10, y_after - 1, underline_w, 1, "F")
         self.ln(5)
 
     def add_heading2(self, text: str):
@@ -260,7 +306,7 @@ class ProfessionalPDF(FPDF, HTMLMixin):
         self.set_xy(indent, self.get_y())
         self.set_font("helvetica", "", 11)
         self.set_text_color(*self.accent_color)
-        self.cell(5, 6, "•", ln=False)
+        self.cell(5, 6, "-", ln=False)
 
         # Text
         self.set_x(indent + 5)
@@ -571,11 +617,11 @@ def parse_markdown_content(content: str) -> List[Dict[str, Any]]:
 
             while i < len(lines):
                 bullet_line = lines[i].rstrip()
-                if bullet_line.startswith("- ") or bullet_line.startswith("* "):
-                    bullet_items.append({"text": bullet_line[2:], "level": 0})
-                    i += 1
-                elif bullet_line.startswith("  - ") or bullet_line.startswith("  * "):
-                    bullet_items.append({"text": bullet_line[4:], "level": 1})
+                stripped_bullet = bullet_line.lstrip()
+                indent = len(bullet_line) - len(stripped_bullet)
+                if stripped_bullet.startswith("- ") or stripped_bullet.startswith("* "):
+                    level = 1 if indent >= 2 else 0
+                    bullet_items.append({"text": stripped_bullet[2:], "level": level})
                     i += 1
                 elif bullet_line:
                     break
@@ -767,6 +813,21 @@ def generate_pdf_report(
         Absolute file path of the generated PDF
     """
     try:
+        # Sanitize Unicode characters that fpdf2's latin-1 fonts can't handle
+        unicode_replacements = {
+            "\u2014": "--",  # em-dash
+            "\u2013": "-",  # en-dash
+            "\u2018": "'",  # left single quote
+            "\u2019": "'",  # right single quote
+            "\u201c": '"',  # left double quote
+            "\u201d": '"',  # right double quote
+            "\u2022": "-",  # bullet
+            "\u2026": "...",  # ellipsis
+            "\u00a0": " ",  # non-breaking space
+        }
+        for char, replacement in unicode_replacements.items():
+            markdown_content = markdown_content.replace(char, replacement)
+
         # Prepare filename
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         if filename == "report.pdf" or filename == "output.pdf":
@@ -788,15 +849,23 @@ def generate_pdf_report(
         # Create PDF
         pdf = ProfessionalPDF(title=report_title, sender_email=sender_email)
 
-        # Add title page
-        metadata = {
-            "Generated By": "AI Research Assistant",
-            "Date": datetime.now().strftime("%B %d, %Y"),
-            "Method": "Google Grounding with Real-Time Search",
-        }
-        pdf.add_title_page(
-            report_title, subtitle="Comprehensive Analysis Report", metadata=metadata
-        )
+        # Add title page with context-aware subtitle and metadata
+        is_dossier = report_title.startswith("Meeting Prep Dossier:")
+        if is_dossier:
+            subtitle = "Strategic Briefing Document"
+            metadata = {
+                "Prepared By": "AI Research Assistant",
+                "Date": datetime.now().strftime("%B %d, %Y"),
+                "Classification": "Confidential",
+            }
+        else:
+            subtitle = "Comprehensive Analysis Report"
+            metadata = {
+                "Generated By": "AI Research Assistant",
+                "Date": datetime.now().strftime("%B %d, %Y"),
+                "Method": "Google Grounding with Real-Time Search",
+            }
+        pdf.add_title_page(report_title, subtitle=subtitle, metadata=metadata)
 
         # Add content pages
         pdf.add_page()
