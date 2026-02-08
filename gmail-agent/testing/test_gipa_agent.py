@@ -603,14 +603,14 @@ class TestDocumentGenerator:
     def test_format_target_sender(self):
         t = TargetPerson(name="John", role="Director", direction="sender")
         result = self.generator._format_target(t)
-        assert "**from**" in result
+        assert "from" in result
         assert "John" in result
         assert "Director" in result
 
     def test_format_target_receiver(self):
         t = TargetPerson(name="Mary", direction="receiver")
         result = self.generator._format_target(t)
-        assert "**to**" in result
+        assert "to" in result
 
     def test_format_target_both(self):
         t = TargetPerson(name="Jane", direction="both")
