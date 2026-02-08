@@ -782,6 +782,29 @@ def create_app() -> FastAPI:
 
     # ========== GIPA (Government Information Public Access) Endpoints ==========
 
+    @app.post("/gipa/status", response_model=GIPAResponse)
+    async def gipa_status(request: GIPAStartRequest):
+        """Check the current status of a GIPA request session."""
+        try:
+            from .tools.gipa_agent.gipa_agent import _gipa_sessions
+
+            session = _gipa_sessions.get(request.session_id)
+            if session is None:
+                return GIPAResponse(
+                    success=True,
+                    message="No active session found.",
+                    status="none",
+                )
+            status = session.get("status", "unknown")
+            return GIPAResponse(
+                success=True,
+                message=f"Session is {status}.",
+                status=status,
+                document=session.get("document"),
+            )
+        except Exception as e:
+            return GIPAResponse(success=False, message="", error=str(e))
+
     @app.post("/gipa/start", response_model=GIPAResponse)
     async def gipa_start(request: GIPAStartRequest):
         """Start a new GIPA request session and return the first clarification question."""
