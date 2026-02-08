@@ -82,9 +82,14 @@ def check_instagram_connected(composio_client: Composio, user_id: str) -> bool:
     return check_connected_account_exists(composio_client, user_id, "INSTAGRAM")
 
 
+def check_linkedin_connected(composio_client: Composio, user_id: str) -> bool:
+    """Check if LinkedIn account is connected for user."""
+    return check_connected_account_exists(composio_client, user_id, "LINKEDIN")
+
+
 def get_connected_accounts(composio_client: Composio, user_id: str) -> dict:
     """Get all connected social media accounts for a user."""
-    toolkits = ["TWITTER", "FACEBOOK", "INSTAGRAM", "GMAIL"]
+    toolkits = ["TWITTER", "FACEBOOK", "INSTAGRAM", "GMAIL", "LINKEDIN"]
     connected = {}
 
     for toolkit in toolkits:
@@ -151,45 +156,48 @@ def get_connection_status(composio_client: Composio, connection_id: str):
 
 # ========== Tool Router Style Authentication ==========
 
-def check_toolkits_status(composio_client: Composio, user_id: str, toolkits: list[str]) -> dict:
+
+def check_toolkits_status(
+    composio_client: Composio, user_id: str, toolkits: list[str]
+) -> dict:
     """
     Check connection status for specific toolkits using Tool Router session.
-    
+
     Args:
         composio_client: Composio client instance
         user_id: User ID
         toolkits: List of toolkit slugs (e.g., ["twitter", "facebook"])
-        
+
     Returns:
         Dictionary with toolkit status information
     """
     try:
         # Create session with specified toolkits
         session = composio_client.create(user_id=user_id, toolkits=toolkits)
-        
+
         # Get toolkit status
         toolkit_status = session.toolkits()
-        
+
         result = {}
         for toolkit in toolkit_status.items:
             is_connected = (
-                toolkit.connection 
-                and hasattr(toolkit.connection, 'is_active') 
+                toolkit.connection
+                and hasattr(toolkit.connection, "is_active")
                 and toolkit.connection.is_active
             )
-            
+
             result[toolkit.slug] = {
                 "name": toolkit.name,
                 "connected": is_connected,
                 "connection_id": (
-                    toolkit.connection.connected_account.id 
-                    if is_connected and toolkit.connection.connected_account 
+                    toolkit.connection.connected_account.id
+                    if is_connected and toolkit.connection.connected_account
                     else None
                 ),
             }
-        
+
         return result
-        
+
     except Exception as e:
         raise Exception(f"Failed to check toolkit status: {str(e)}")
 
@@ -197,28 +205,28 @@ def check_toolkits_status(composio_client: Composio, user_id: str, toolkits: lis
 def authorize_toolkit(composio_client: Composio, user_id: str, toolkit: str) -> dict:
     """
     Authorize a toolkit using Tool Router session.authorize() method.
-    
+
     Args:
         composio_client: Composio client instance
         user_id: User ID
         toolkit: Toolkit slug (e.g., "twitter", "facebook")
-        
+
     Returns:
         Dictionary with redirect URL and connection info
     """
     try:
         # Create session
         session = composio_client.create(user_id=user_id)
-        
+
         # Authorize toolkit
         connection_request = session.authorize(toolkit)
-        
+
         return {
             "success": True,
             "toolkit": toolkit,
             "redirect_url": connection_request.redirect_url,
             "message": f"Please visit the redirect URL to authorize {toolkit}",
         }
-        
+
     except Exception as e:
         raise Exception(f"Failed to authorize {toolkit}: {str(e)}")
