@@ -31,6 +31,14 @@ from .models import (
     GIPAGenerateRequest,
     GIPAExpandKeywordsRequest,
     GIPAResponse,
+    DossierGenerateRequest,
+    DossierUpdateRequest,
+    DossierStatusRequest,
+    DossierResponse,
+    LinkedInPostRequest,
+    LinkedInDeletePostRequest,
+    LinkedInMyInfoRequest,
+    LinkedInCompanyInfoRequest,
 )
 from .auth import (
     create_connection,
@@ -39,10 +47,17 @@ from .auth import (
     check_twitter_connected,
     check_facebook_connected,
     check_instagram_connected,
+    check_linkedin_connected,
     get_connected_accounts,
     create_social_connection,
 )
 from .actions import send_email, fetch_emails, create_draft
+from .actions import (
+    create_linkedin_post,
+    delete_linkedin_post,
+    get_linkedin_my_info,
+    get_linkedin_company_info,
+)
 from .chatbot import chat, chat_stream
 from .email_analysis_agents import MultiAgentEmailAnalyzer
 from . import sessions
@@ -204,6 +219,7 @@ def create_app() -> FastAPI:
                     "facebook_connected": len(connected.get("FACEBOOK", [])) > 0,
                     "instagram_connected": len(connected.get("INSTAGRAM", [])) > 0,
                     "gmail_connected": len(connected.get("GMAIL", [])) > 0,
+                    "linkedin_connected": len(connected.get("LINKEDIN", [])) > 0,
                 },
             }
         except Exception as e:
@@ -219,7 +235,7 @@ def create_app() -> FastAPI:
         Returns redirect URL for OAuth flow.
         """
         platform = platform.upper()
-        valid_platforms = ["TWITTER", "FACEBOOK", "INSTAGRAM"]
+        valid_platforms = ["TWITTER", "FACEBOOK", "INSTAGRAM", "LINKEDIN"]
 
         if platform not in valid_platforms:
             raise HTTPException(
@@ -256,6 +272,8 @@ def create_app() -> FastAPI:
                 connected = check_facebook_connected(composio_client, user_id)
             elif platform == "INSTAGRAM":
                 connected = check_instagram_connected(composio_client, user_id)
+            elif platform == "LINKEDIN":
+                connected = check_linkedin_connected(composio_client, user_id)
             else:
                 raise HTTPException(status_code=400, detail="Invalid platform")
 
@@ -274,7 +292,7 @@ def create_app() -> FastAPI:
         from .auth import check_toolkits_status
 
         try:
-            toolkits = ["twitter", "facebook", "instagram"]
+            toolkits = ["twitter", "facebook", "instagram", "linkedin"]
             status = check_toolkits_status(composio_client, user_id, toolkits)
 
             return {
@@ -359,6 +377,57 @@ def create_app() -> FastAPI:
             return ToolExecutionResponse(successful=True, data=result)
         except HTTPException:
             raise
+        except Exception as e:
+            return ToolExecutionResponse(successful=False, error=str(e))
+
+    # ========== LinkedIn Action Endpoints ==========
+
+    @app.get("/actions/linkedin/my_info", response_model=ToolExecutionResponse)
+    def _linkedin_my_info(
+        user_id: str = "default", composio_client: ComposioClient = None
+    ):
+        try:
+            result = get_linkedin_my_info(composio_client, user_id)
+            return ToolExecutionResponse(successful=True, data=result)
+        except Exception as e:
+            return ToolExecutionResponse(successful=False, error=str(e))
+
+    @app.post("/actions/linkedin/post", response_model=ToolExecutionResponse)
+    def _linkedin_post(request: LinkedInPostRequest, composio_client: ComposioClient):
+        try:
+            result = create_linkedin_post(
+                composio_client,
+                request.user_id,
+                request.author,
+                request.commentary,
+                request.visibility,
+                request.lifecycle_state,
+            )
+            return ToolExecutionResponse(successful=True, data=result)
+        except Exception as e:
+            return ToolExecutionResponse(successful=False, error=str(e))
+
+    @app.post("/actions/linkedin/delete_post", response_model=ToolExecutionResponse)
+    def _linkedin_delete_post(
+        request: LinkedInDeletePostRequest, composio_client: ComposioClient
+    ):
+        try:
+            result = delete_linkedin_post(
+                composio_client, request.user_id, request.share_id
+            )
+            return ToolExecutionResponse(successful=True, data=result)
+        except Exception as e:
+            return ToolExecutionResponse(successful=False, error=str(e))
+
+    @app.get("/actions/linkedin/company_info", response_model=ToolExecutionResponse)
+    def _linkedin_company_info(
+        user_id: str = "default",
+        role: str = "ADMINISTRATOR",
+        composio_client: ComposioClient = None,
+    ):
+        try:
+            result = get_linkedin_company_info(composio_client, user_id, role=role)
+            return ToolExecutionResponse(successful=True, data=result)
         except Exception as e:
             return ToolExecutionResponse(successful=False, error=str(e))
 
@@ -884,6 +953,139 @@ def create_app() -> FastAPI:
             )
         except Exception as e:
             return GIPAResponse(success=False, message="", error=str(e))
+
+    # ========== Dossier (Meeting Prep) Endpoints ==========
+
+    @app.post("/dossier/status", response_model=DossierResponse)
+    async def dossier_status(request: DossierStatusRequest):
+        """Check the current status of a dossier/meeting prep session."""
+        try:
+            from .tools.dossier_agent.dossier_agent import _dossier_sessions
+
+            session = _dossier_sessions.get(request.dossier_id)
+            if session is None:
+                return DossierResponse(
+                    success=True,
+                    message="No active dossier session found.",
+                    status="none",
+                )
+            status = session.get("status", "unknown")
+            return DossierResponse(
+                success=True,
+                message=f"Dossier session is {status}.",
+                status=status,
+                document=session.get("document"),
+            )
+        except Exception as e:
+            return DossierResponse(success=False, message="", error=str(e))
+
+    @app.post("/dossier/generate", response_model=DossierResponse)
+    async def dossier_generate_endpoint(request: DossierGenerateRequest):
+        """Generate a comprehensive meeting prep dossier for a person."""
+        try:
+            from .tools.dossier_agent.dossier_agent import _get_agent, _dossier_sessions
+
+            agent = _get_agent()
+            document = await agent.generate_dossier(
+                dossier_id=request.dossier_id,
+                name=request.name,
+                linkedin_url=request.linkedin_url,
+                meeting_context=request.meeting_context,
+            )
+
+            session = _dossier_sessions.get(request.dossier_id, {})
+            if session.get("status") == "generated":
+                return DossierResponse(
+                    success=True,
+                    message="Dossier generated successfully.",
+                    status="generated",
+                    document=document,
+                )
+            else:
+                return DossierResponse(
+                    success=False,
+                    message=document,
+                    status=session.get("status", "error"),
+                    error=document,
+                )
+        except Exception as e:
+            return DossierResponse(success=False, message="", error=str(e))
+
+    @app.post("/dossier/update", response_model=DossierResponse)
+    async def dossier_update_endpoint(request: DossierUpdateRequest):
+        """Update an existing dossier with additional meeting context."""
+        try:
+            from .tools.dossier_agent.dossier_agent import _get_agent, _dossier_sessions
+
+            agent = _get_agent()
+            document = await agent.update_dossier(
+                dossier_id=request.dossier_id,
+                additional_context=request.additional_context,
+            )
+
+            session = _dossier_sessions.get(request.dossier_id, {})
+            return DossierResponse(
+                success=True,
+                message="Dossier updated successfully.",
+                status=session.get("status", "generated"),
+                document=document,
+            )
+        except Exception as e:
+            return DossierResponse(success=False, message="", error=str(e))
+
+    @app.get("/dossier/{dossier_id}", response_model=DossierResponse)
+    async def dossier_get_document_endpoint(dossier_id: str):
+        """Retrieve a generated dossier document."""
+        try:
+            from .tools.dossier_agent.dossier_agent import _dossier_sessions
+
+            session = _dossier_sessions.get(dossier_id)
+            if session is None:
+                return DossierResponse(
+                    success=False,
+                    message="No dossier found with that ID.",
+                    status="none",
+                )
+            if session.get("status") != "generated":
+                return DossierResponse(
+                    success=False,
+                    message=f"Dossier is not ready yet. Status: {session.get('status', 'unknown')}",
+                    status=session.get("status", "unknown"),
+                )
+            return DossierResponse(
+                success=True,
+                message="Dossier retrieved successfully.",
+                status="generated",
+                document=session.get("document"),
+            )
+        except Exception as e:
+            return DossierResponse(success=False, message="", error=str(e))
+
+    @app.delete("/dossier/{dossier_id}", response_model=DossierResponse)
+    async def dossier_delete_endpoint(dossier_id: str):
+        """Delete a dossier session and free its resources."""
+        try:
+            from .tools.dossier_agent.dossier_agent import (
+                _dossier_sessions,
+                _clear_session,
+            )
+
+            session = _dossier_sessions.get(dossier_id)
+            if session is None:
+                return DossierResponse(
+                    success=False,
+                    message=f"No dossier found with ID '{dossier_id}'.",
+                    status="none",
+                )
+            name = session.get("name", "Unknown")
+            _clear_session(dossier_id)
+            return DossierResponse(
+                success=True,
+                message=f"Dossier session for '{name}' has been deleted.",
+                status="deleted",
+            )
+        except Exception as e:
+            return DossierResponse(success=False, message="", error=str(e))
 
     return app
 
