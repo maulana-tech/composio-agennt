@@ -177,6 +177,9 @@ class GIPAResponse(BaseModel):
     message: str
     status: Optional[str] = None
     document: Optional[str] = None
+    html_body: Optional[str] = None
+    draft_recipient: Optional[str] = None
+    draft_subject: Optional[str] = None
     error: Optional[str] = None
 
 
