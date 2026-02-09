@@ -475,8 +475,21 @@ User: "Ya, benar"
      │       ├── build_scope_and_definitions()
      │       └── _build_closing()
      │
-Agent: [Dokumen GIPA formal dalam format Markdown]
+Agent: [Dokumen GIPA formal + email draft instructions]
+     │
+     ▼ Main Agent: GMAIL_CREATE_EMAIL_DRAFT(recipient=agency_email, subject="RE: GIPA Act...", body=document)
+     │
+Agent: "I've created a draft email in your Gmail addressed to [agency]. Please review before sending."
 ```
+
+### Output Flow
+
+**IMPORTANT:** The GIPA agent does NOT produce PDFs. The output is always an email draft:
+
+1. `gipa_generate_document` returns the Markdown document + email draft metadata (agency_email, subject)
+2. The main agent MUST immediately call `GMAIL_CREATE_EMAIL_DRAFT` with the document as the body
+3. User reviews the draft in Gmail, then manually sends when satisfied
+4. No web/online research is performed — keyword expansion uses LLM inference only
 
 ---
 
@@ -497,4 +510,4 @@ Agent: [Dokumen GIPA formal dalam format Markdown]
 |---|---|---|
 | `collecting` | Masih mengumpulkan informasi dari user | `gipa_process_answer()` |
 | `ready` | Semua data lengkap, menunggu konfirmasi user | `gipa_generate_document()` |
-| `generated` | Dokumen sudah di-generate | Mulai sesi baru dengan `gipa_start_request()` |
+| `generated` | Dokumen sudah di-generate | Main agent creates Gmail draft via `GMAIL_CREATE_EMAIL_DRAFT`, user reviews in Gmail |
