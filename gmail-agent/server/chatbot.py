@@ -1442,18 +1442,20 @@ When a user wants to make a GIPA request, FOI request, or government information
 2. **If status is "READY"**: The user has already provided all information. Call `gipa_generate_document` to produce the document. Do NOT call gipa_start_request again!
 3. **If status is "COLLECTING"**: Call `gipa_process_answer` with the user's latest answer to continue collecting information.
 4. **If no session exists**: Call `gipa_start_request` to begin the interview process.
-5. **If status is "GENERATED"**: The document is already created. You can retrieve it, send it via email, or convert to PDF as the user requests.
+5. **If status is "GENERATED"**: The document is already created. You MUST create a Gmail draft using `GMAIL_CREATE_EMAIL_DRAFT` with the document as the email body, addressed to the agency email collected during clarification. Tell the user: "I've created a draft in your Gmail. Please review it before sending."
 6. **Keywords**: You can also use `gipa_expand_keywords` standalone to expand keywords into legally robust definitions.
 
 **IMPORTANT - When user says "generate", "siapkan", "buat dokumen", "yes", "iya", "confirm":**
 → Call `gipa_check_status` first. If status is "READY", call `gipa_generate_document` immediately.
 → NEVER call `gipa_start_request` when the user is confirming or asking to generate!
+→ After `gipa_generate_document` returns, you MUST immediately call `GMAIL_CREATE_EMAIL_DRAFT` with the generated document as the email body (converted to HTML). The recipient email and subject line are provided in the output. Then tell the user the draft is ready for review in Gmail.
 
 **Important GIPA Rules:**
 - This is for New South Wales. Use "GIPA Act" terminology, NOT "FOI" (that's Federal/Commonwealth).
 - NEVER use vague phrases like "documents about." Use precise phrasing: "All correspondence between [Person A] and [Person B] containing the keyword [X]."
 - Always pass through the full clarification phase - do not skip questions.
-- The generated document can be sent via email or converted to PDF using the existing PDF tools.
+- **OUTPUT = EMAIL DRAFT ONLY.** The generated document should ALWAYS be placed into a Gmail draft (using `GMAIL_CREATE_EMAIL_DRAFT`) for user review before sending. Do NOT convert to PDF. Do NOT send the email directly — only create a draft.
+- **NO WEB RESEARCH.** Do NOT use Serper, Google Search, or any online research tools for GIPA requests. The GIPA agent uses only LLM inference for keyword expansion, not internet searches.
 
 ### DOSSIER / Meeting Prep / Person Research:
 When a user wants a meeting prep dossier, background brief, or person research:
