@@ -181,14 +181,21 @@ class GIPARequestAgent:
             # Get jurisdiction config
             config = get_jurisdiction_config(gipa_data.jurisdiction)
 
-            # Generate the document
+            # Generate the document (Markdown for display)
             document = await self.document_generator.generate(
+                data=gipa_data,
+                config=config,
+            )
+
+            # Generate HTML version for Gmail draft
+            html_body = await self.document_generator.generate_html(
                 data=gipa_data,
                 config=config,
             )
 
             session["status"] = "generated"
             session["document"] = document
+            session["html_body"] = html_body
 
             # Build email draft metadata
             agency_email = gipa_data.agency_email or ""
@@ -197,13 +204,16 @@ class GIPARequestAgent:
             )
 
             # Return document with draft instructions for the main agent
+            # The HTML body is included so the agent can pass it directly
+            # to GMAIL_CREATE_EMAIL_DRAFT without any conversion
             draft_instruction = (
                 f"\n\n---\n"
                 f"**EMAIL DRAFT INSTRUCTIONS (for the main agent):**\n"
                 f"You MUST now create a Gmail draft using `GMAIL_CREATE_EMAIL_DRAFT` with:\n"
                 f"- **recipient_email**: `{agency_email}`\n"
                 f"- **subject**: `{subject}`\n"
-                f"- **body**: The full document above (convert Markdown to HTML)\n\n"
+                f"- **body**: Use the following HTML exactly as-is (do NOT modify):\n\n"
+                f"```html\n{html_body}\n```\n\n"
                 f"After creating the draft, tell the user: "
                 f"\"I've created a draft email in your Gmail addressed to {agency_email}. "
                 f'Please review it before sending."\n'
