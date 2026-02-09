@@ -59,6 +59,7 @@ def create_draft(
             "recipient_email": recipient_email,
             "subject": subject,
             "body": body,
+            "is_html": True,
         },
     )
 
