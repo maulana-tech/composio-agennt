@@ -925,7 +925,10 @@ def create_app() -> FastAPI:
                     success=True,
                     message="GIPA application generated successfully.",
                     status="generated",
-                    document=document,
+                    document=session.get("document", document),
+                    html_body=session.get("html_body"),
+                    draft_recipient=session.get("data", {}).get("agency_email", ""),
+                    draft_subject=f"RE: Government Information (Public Access) Act 2009 (GIPA Act) - Information Request",
                 )
             else:
                 return GIPAResponse(
