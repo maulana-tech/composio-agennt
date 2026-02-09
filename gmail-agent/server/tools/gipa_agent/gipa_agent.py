@@ -150,11 +150,15 @@ class GIPARequestAgent:
         """
         Generate the GIPA application document from collected data.
 
+        After generation, returns the document along with email draft metadata
+        so the main agent can create a Gmail draft for user review.
+
         Args:
             session_id: The session identifier.
 
         Returns:
-            The complete GIPA application as Markdown, or an error message.
+            The complete GIPA application as Markdown with email draft instructions,
+            or an error message.
         """
         session = _get_or_create_session(session_id)
 
@@ -186,7 +190,27 @@ class GIPARequestAgent:
             session["status"] = "generated"
             session["document"] = document
 
-            return document
+            # Build email draft metadata
+            agency_email = gipa_data.agency_email or ""
+            subject = (
+                f"RE: {config.act_name} ({config.act_short_name}) - Information Request"
+            )
+
+            # Return document with draft instructions for the main agent
+            draft_instruction = (
+                f"\n\n---\n"
+                f"**EMAIL DRAFT INSTRUCTIONS (for the main agent):**\n"
+                f"You MUST now create a Gmail draft using `GMAIL_CREATE_EMAIL_DRAFT` with:\n"
+                f"- **recipient_email**: `{agency_email}`\n"
+                f"- **subject**: `{subject}`\n"
+                f"- **body**: The full document above (convert Markdown to HTML)\n\n"
+                f"After creating the draft, tell the user: "
+                f"\"I've created a draft email in your Gmail addressed to {agency_email}. "
+                f'Please review it before sending."\n'
+                f"Do NOT send the email directly — only create a draft for review."
+            )
+
+            return document + draft_instruction
 
         except Exception as e:
             return f"Error generating GIPA application: {str(e)}"
@@ -320,11 +344,11 @@ async def gipa_process_answer(
 
 @tool
 async def gipa_generate_document(session_id: str = "default") -> str:
-    """Generate the formal GIPA application document.
+    """Generate the formal GIPA application document and prepare email draft instructions.
 
     Call this tool after all clarification questions have been answered and
     the user has confirmed the summary is correct. This generates the complete,
-    legally robust GIPA application document in Markdown format.
+    legally robust GIPA application document.
 
     The document includes:
     - Header & routing information
@@ -333,11 +357,15 @@ async def gipa_generate_document(session_id: str = "default") -> str:
     - Comprehensive scope & definitions (legal shield)
     - AI-expanded keyword definitions
 
+    IMPORTANT: The output includes email draft instructions. After calling this tool,
+    you MUST create a Gmail draft using GMAIL_CREATE_EMAIL_DRAFT with the document
+    as the email body, addressed to the agency email. Do NOT send directly — only draft.
+
     Args:
         session_id: Session identifier for the completed clarification session.
 
     Returns:
-        The complete GIPA application document in Markdown format.
+        The complete GIPA application document plus email draft metadata.
     """
     agent = _get_agent()
     return await agent.generate_document(session_id)
