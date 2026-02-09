@@ -9,6 +9,9 @@ Comprehensive documentation in English to understand every file, why it's used, 
 1. [Project Overview](#project-overview)
 2. [System Architecture](#system-architecture)
 3. [Gmail Agent (Backend)](#gmail-agent-backend)
+   - [Session Management System](#session-management-system)
+   - [Multi-Agent Email Analysis](#multi-agent-email-analysis)
+   - [Advanced Agent Tools](#advanced-agent-tools)
 4. [Gmail Chatbot UI (Frontend)](#gmail-chatbot-ui-frontend)
 5. [How the System Works](#how-the-system-works)
 
@@ -21,6 +24,10 @@ This project is an **AI-powered Gmail chatbot** that allows users to:
 - ✉️ **Send emails** using natural language commands
 - 📝 **Create email drafts** with AI-generated content
 - 📬 **Fetch recent emails** from Gmail inbox
+- 🔍 **Analyze emails** with multi-agent fact-checking and research
+- 📱 **Post to social media** (Twitter, Facebook, Instagram)
+- 📊 **Generate reports** and professional documents (PDF, GIPA requests, dossiers)
+- 💬 **Maintain conversation context** across sessions with persistent chat history
 
 ### Technologies Used
 
@@ -28,8 +35,13 @@ This project is an **AI-powered Gmail chatbot** that allows users to:
 |----------|-----------|----------------|
 | **Backend** | FastAPI (Python) | Modern, fast web framework for building REST APIs |
 | **Frontend** | Next.js 16 (React) | Best React framework for modern web apps with SSR |
-| **AI/LLM** | Groq (Llama 3.3 70B) | Ultra-fast and free LLM for parsing user intent |
+| **AI/LLM** | Groq (Llama 3.3 70B) + Google Gemini 2.0 Flash | Ultra-fast LLMs for intent parsing and analysis |
 | **Gmail Integration** | Composio SDK | Platform that simplifies OAuth and Gmail API integration |
+| **Social Media** | Composio (Twitter, Facebook, Instagram) | Unified API for multiple social platforms |
+| **Database** | SQLite | Lightweight database for session management |
+| **Search** | Google Grounding with Search + Serper API | Real-time web research and fact-checking |
+| **Image Generation** | DALL-E, Pillow, Gemini | Multiple options for quote and visual content |
+| **PDF Generation** | ReportLab, WeasyPrint | Professional document generation |
 | **Styling** | Tailwind CSS 4 | Utility-first CSS framework for fast, consistent styling |
 
 ---
@@ -80,21 +92,38 @@ This project is an **AI-powered Gmail chatbot** that allows users to:
 
 ```
 gmail-agent/
-├── .env                    # API keys configuration (SECRET!)
-├── .env.example            # Template for .env
-├── .gitignore              # Files ignored by Git
-├── Makefile                # Automated commands for setup & run
-├── README.md               # Quick backend documentation
-├── requirements.txt        # List of required Python libraries
-├── test_api.sh             # Script for API testing
-└── server/                 # Main code folder
-    ├── __init__.py         # Python package marker
-    ├── api.py              # ⭐ Main file - routing & endpoints
-    ├── actions.py          # Gmail operations (send, fetch, draft)
-    ├── auth.py             # Gmail OAuth authentication logic
-    ├── chatbot.py          # ⭐ AI logic for command parsing
-    ├── dependencies.py     # Dependency injection (Composio client)
-    └── models.py           # Data models (request/response)
+├── .env                              # API keys configuration (SECRET!)
+├── .env.example                      # Template for .env
+├── .gitignore                        # Files ignored by Git
+├── Makefile                          # Automated commands for setup & run
+├── README.md                         # Quick backend documentation
+├── requirements.txt                  # List of required Python libraries
+├── analysis_report.md                # Analysis documentation
+├── generate_dossier_pdf.py           # PDF generation utility
+├── docs/                             # Documentation folder
+│   ├── SOCIAL_MEDIA_AUTH.md          # Social media authentication guide
+│   └── MEDIA_POSTING_GUIDE.md        # Media posting guide
+├── testing/                          # Testing scripts
+└── server/                           # Main code folder
+    ├── __init__.py                   # Python package marker
+    ├── api.py                        # ⭐ Main file - routing & endpoints
+    ├── actions.py                    # Gmail operations (send, fetch, draft)
+    ├── auth.py                       # Gmail OAuth authentication logic
+    ├── chatbot.py                    # ⭐ AI logic for command parsing
+    ├── dependencies.py               # Dependency injection (Composio client)
+    ├── models.py                     # Data models (request/response)
+    ├── sessions.py                   # 🆕 Session management with SQLite
+    ├── email_analysis_agents.py      # 🆕 Multi-agent email analysis system
+    └── tools/                        # 🆕 Advanced agent tools
+        ├── dossier_agent/            # Meeting prep & research agent
+        ├── gipa_agent/               # GIPA request generator agent
+        ├── avatar_quote_generator.py # Avatar-based quote image generator
+        ├── dalle_quote_generator.py  # DALL-E quote image generator
+        ├── pillow_quote_generator.py # Pillow-based quote generator
+        ├── pdf_generator.py          # PDF report generator
+        ├── social_media_poster.py    # Social media posting tools
+        ├── direct_social_media.py    # Direct social media integration
+        └── strategy_diagram_agent.py # Strategy diagram generator
 ```
 
 ---
@@ -795,6 +824,795 @@ api_key = os.getenv("COMPOSIO_API_KEY")  # Get value
 
 ---
 
+### 🆕 Session Management System
+
+#### `server/sessions.py` - Chat History Persistence
+
+**Purpose:** Manages persistent chat sessions using SQLite for storing conversation history.
+
+**Why Session Management?**
+- Maintains conversation context across multiple interactions
+- Allows users to resume previous conversations
+- Enables multi-turn dialogue with the AI
+- Provides chat history for reference and analysis
+
+**Key Features:**
+
+1. **SQLite Database Storage**
+   - Lightweight, serverless database
+   - No external database server required
+   - Automatic initialization on startup
+   - Two main tables: `sessions` and `messages`
+
+2. **Session Operations**
+
+| Function | Purpose | Returns |
+|----------|---------|---------|
+| `create_session(user_id, title)` | Create new chat session | Session object with ID |
+| `get_session(session_id)` | Get session with all messages | Full session data |
+| `list_sessions(user_id, limit)` | List user's sessions | Array of sessions |
+| `delete_session(session_id)` | Delete session and messages | Success boolean |
+| `update_session_title(session_id, title)` | Update session title | Success boolean |
+
+3. **Message Operations**
+
+| Function | Purpose | Parameters |
+|----------|---------|------------|
+| `add_message(session_id, role, content, action, success)` | Add message to session | role: "user" or "assistant" |
+
+**Database Schema:**
+
+```sql
+-- Sessions table
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,              -- UUID
+    user_id TEXT NOT NULL,            -- User identifier
+    title TEXT,                       -- Auto-generated from first message
+    created_at TIMESTAMP,             -- Session creation time
+    updated_at TIMESTAMP              -- Last activity time
+)
+
+-- Messages table
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,              -- UUID
+    session_id TEXT NOT NULL,         -- Foreign key to sessions
+    role TEXT NOT NULL,               -- "user" or "assistant"
+    content TEXT NOT NULL,            -- Message content
+    action TEXT,                      -- Action taken (optional)
+    success INTEGER,                  -- Action success flag (optional)
+    created_at TIMESTAMP,             -- Message timestamp
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+)
+```
+
+**How It Works:**
+
+```python
+# 1. Create a new session
+session = create_session(user_id="user123", title="Email Help")
+# Returns: {"id": "uuid-here", "user_id": "user123", ...}
+
+# 2. Add user message
+add_message(
+    session_id=session["id"],
+    role="user",
+    content="Send email to john@example.com"
+)
+
+# 3. Add assistant response
+add_message(
+    session_id=session["id"],
+    role="assistant",
+    content="I'll send that email now.",
+    action="send_email",
+    success=True
+)
+
+# 4. Retrieve full conversation
+conversation = get_session(session["id"])
+# Returns session with all messages in chronological order
+```
+
+**Benefits:**
+- ✅ No external dependencies (SQLite is built-in)
+- ✅ Automatic session title generation from first message
+- ✅ Cascading deletes (deleting session removes all messages)
+- ✅ Indexed queries for fast retrieval
+- ✅ Thread-safe with context managers
+
+---
+
+### 🆕 Multi-Agent Email Analysis
+
+#### `server/email_analysis_agents.py` - Intelligent Email Fact-Checking
+
+**Purpose:** Multi-agent system for analyzing emails and fact-checking claims using web research.
+
+**Why Multi-Agent Architecture?**
+- Separation of concerns: Each agent has a specific expertise
+- Parallel processing: Multiple research queries simultaneously
+- Better quality: Specialized agents produce better results than one generalist
+- Scalable: Easy to add new agents or capabilities
+
+**The 4-Agent Pipeline:**
+
+```
+📧 Email → 🔍 Analysis → 📋 Planning → 🌐 Research → 📄 Report
+   ↓          ↓              ↓             ↓           ↓
+ Input    Extract        Create       Execute    Generate
+          Claims         Strategy     Searches    Final Doc
+```
+
+#### Agent 1: EmailAnalysisAgent
+
+**Purpose:** Extracts factual claims and key entities from emails.
+
+**Technology:** Google Gemini 2.0 Flash (fast, cost-effective)
+
+**What It Does:**
+```python
+# Input: Raw email content
+# Output: Structured analysis
+{
+    "summary": "Email summary",
+    "claims": [
+        {
+            "claim": "Company revenue grew 50% in Q3",
+            "priority": "high",
+            "type": "financial"
+        }
+    ],
+    "entities": {
+        "people": ["John Smith"],
+        "organizations": ["Acme Corp"],
+        "locations": ["New York"],
+        "dates": ["Q3 2024"]
+    }
+}
+```
+
+**Key Capabilities:**
+- Identifies verifiable vs. opinion statements
+- Prioritizes claims by importance (high/medium/low)
+- Detects context: political, business, scientific, etc.
+- Extracts named entities for research
+
+---
+
+#### Agent 2: ResearchPlanningAgent
+
+**Purpose:** Creates a strategic research plan to verify each claim.
+
+**Technology:** Google Gemini 2.0 Flash
+
+**What It Does:**
+```python
+# Input: Email analysis from Agent 1
+# Output: Research strategy
+{
+    "strategy": "Multi-source verification approach",
+    "search_queries": [
+        "Acme Corp Q3 2024 revenue financial report",
+        "Acme Corp quarterly earnings official",
+        "Acme Corp revenue growth 2024"
+    ],
+    "priorities": ["high", "high", "medium"],
+    "source_types": [
+        "company_financials",
+        "news_organizations",
+        "government_filings"
+    ]
+}
+```
+
+**Key Capabilities:**
+- Generates optimized search queries for each claim
+- Suggests credible source types (news, gov, academic)
+- Prioritizes which claims to research first
+- Plans how to handle conflicting information
+
+---
+
+#### Agent 3: WebResearchAgent
+
+**Purpose:** Executes web searches using Google Grounding to find evidence.
+
+**Technology:** Google Gemini 2.0 Flash + Google Grounding with Search
+
+**What Is Google Grounding?**
+- Real-time web search integrated with Gemini
+- Provides actual sources with URLs
+- Returns grounded responses with citations
+- More reliable than generic LLM responses
+
+**What It Does:**
+```python
+# Input: Research plan from Agent 2
+# Output: Search results with sources
+{
+    "raw_results": {
+        "query_1": {
+            "query": "Acme Corp Q3 2024 revenue",
+            "results": [
+                {
+                    "title": "Acme Corp Q3 Earnings Report",
+                    "link": "https://acme.com/investors/q3-2024",
+                    "snippet": "Revenue reached $150M, up 50%...",
+                    "sources": [...]
+                }
+            ],
+            "success": true
+        }
+    },
+    "analysis": {
+        "key_findings": [...],
+        "credibility_assessment": "high",
+        "confidence_levels": {...}
+    }
+}
+```
+
+**Key Features:**
+- Parallel search execution (3 queries simultaneously)
+- Automatic source extraction from grounding metadata
+- Enriched results with full content snippets
+- Error handling for failed searches
+
+---
+
+#### Agent 4: ReportGenerationAgent
+
+**Purpose:** Synthesizes all research into a professional fact-checking report.
+
+**Technology:** Google Gemini 2.0 Flash (higher temperature for better writing)
+
+**Report Structure:**
+
+```markdown
+# Fact-Checking Report
+
+## Executive Summary
+Brief overview of all claims and verdicts
+
+## Original Claims
+1. Claim #1: "Revenue grew 50%"
+   - Context: From CEO's quarterly email
+   - Importance: High
+
+## Investigation Methodology
+- Search strategy used
+- Sources consulted
+- Verification approach
+
+## Detailed Findings
+
+### Claim #1: Revenue Growth
+**Verdict:** ✅ TRUE
+
+**Evidence:**
+- Official financial report confirms 50% growth
+- Multiple news sources corroborate
+- SEC filing matches claimed figures
+
+**Sources:**
+1. Acme Corp Q3 Earnings (acme.com/investors)
+2. Reuters article (reuters.com/...)
+3. SEC Form 10-Q (sec.gov/...)
+
+**Analysis:**
+The claim is accurate based on multiple credible sources...
+
+## Conclusion
+Overall assessment and limitations
+
+## Sources
+Complete bibliography
+```
+
+**Optional PDF Generation:**
+- Converts Markdown report to professional PDF
+- Includes branding and formatting
+- Downloadable for offline use
+
+---
+
+#### MultiAgentEmailAnalyzer - The Orchestrator
+
+**Purpose:** Coordinates all 4 agents in sequence.
+
+**Complete Pipeline:**
+
+```python
+analyzer = MultiAgentEmailAnalyzer()
+
+result = await analyzer.analyze_and_report(
+    email_content="Subject: Q3 Results...",
+    user_query="Verify financial claims",
+    generate_pdf=True
+)
+
+# Returns:
+{
+    "status": "completed",
+    "success": true,
+    "stages": {
+        "email_analysis": {...},      # Agent 1 output
+        "research_plan": {...},        # Agent 2 output
+        "research_results": {...}      # Agent 3 output
+    },
+    "final_report": "# Fact-Checking Report...",  # Markdown
+    "pdf_path": "/path/to/report.pdf"             # Optional PDF
+}
+```
+
+**Error Handling:**
+- Each stage has try-except protection
+- Failures don't crash the entire pipeline
+- Partial results still returned if possible
+- Detailed error messages for debugging
+
+**Use Cases:**
+- ✅ Verify claims in marketing emails
+- ✅ Fact-check political newsletters
+- ✅ Validate business proposals
+- ✅ Research product announcements
+- ✅ Verify news in forwarded emails
+
+---
+
+### 🆕 Advanced Agent Tools
+
+The `server/tools/` directory contains specialized agents and utilities for advanced tasks.
+
+---
+
+#### 1️⃣ Dossier Agent - Meeting Preparation & Research
+
+**Location:** `server/tools/dossier_agent/`
+
+**Purpose:** Automatically research a person and generate a one-page meeting preparation dossier.
+
+**What It Does:**
+- Takes a name + optional LinkedIn URL
+- Researches the person across the web
+- Synthesizes bio, achievements, statements
+- Identifies key associates and connections
+- Generates conversation starters and talking points
+
+**Architecture:**
+
+```
+Input (Name + LinkedIn) 
+    ↓
+DataCollector - Gathers info from web
+    ↓
+ResearchSynthesizer - Organizes findings
+    ↓
+StrategicAnalyzer - Identifies insights
+    ↓
+DossierGenerator - Creates formatted document
+    ↓
+Output (One-page dossier)
+```
+
+**Key Files:**
+
+| File | Purpose |
+|------|---------|
+| `dossier_agent.py` | Main orchestrator with @tool decorators |
+| `data_collector.py` | Web scraping and data gathering |
+| `research_synthesizer.py` | Organizes raw data into structured info |
+| `strategic_analyzer.py` | Extracts strategic insights |
+| `dossier_generator.py` | Formats final document |
+| `exceptions.py` | Custom error types |
+| `templates/` | Document templates |
+
+**Session Management:**
+- In-memory session store
+- Supports concurrent dossier generation
+- 24-hour session TTL
+- Automatic cleanup of expired sessions
+
+**Example Usage:**
+
+```python
+from server.tools.dossier_agent import start_dossier_research
+
+result = start_dossier_research(
+    name="Elon Musk",
+    linkedin_url="https://linkedin.com/in/elonmusk",
+    meeting_context="Discussing Tesla partnership"
+)
+
+# Returns: Professional dossier with bio, insights, talking points
+```
+
+**Output Includes:**
+- 📋 Professional background and current role
+- 🎯 Key achievements and milestones
+- 💬 Notable public statements and positions
+- 🤝 Important associates and connections
+- 💡 Conversation starters and strategic talking points
+- 🔗 Source links for verification
+
+---
+
+#### 2️⃣ GIPA Agent - Government Information Request Generator
+
+**Location:** `server/tools/gipa_agent/`
+
+**Purpose:** Guides users through creating legally robust GIPA (Government Information Public Access) requests for NSW, Australia.
+
+**What Is GIPA?**
+- NSW law requiring government agencies to provide information
+- Similar to Freedom of Information (FOI) requests
+- Requires specific legal language and structure
+- Vague requests can be rejected as "unreasonable"
+
+**What The Agent Does:**
+- Conducts interactive interview with user
+- Asks clarifying questions about their request
+- Expands keywords with legal synonyms
+- Generates formally worded GIPA application
+- Ensures request is precise and legally sound
+
+**Architecture:**
+
+```
+User Request
+    ↓
+ClarificationEngine - Interviews user
+    ↓
+SynonymExpander - Adds legal terminology
+    ↓
+DocumentGenerator - Creates formal document
+    ↓
+Formatted GIPA Application
+```
+
+**Key Files:**
+
+| File | Purpose |
+|------|---------|
+| `gipa_agent.py` | Main orchestrator with session management |
+| `clarification_engine.py` | Interactive interview system |
+| `synonym_expander.py` | Legal synonym generation |
+| `document_generator.py` | Formal document creation |
+| `jurisdiction_config.py` | NSW-specific legal requirements |
+| `templates/` | GIPA document templates |
+
+**Interview Process:**
+
+```
+1. Which government agency? 
+   → User: "Department of Education"
+
+2. What information do you seek?
+   → User: "Teacher hiring data"
+
+3. Specific timeframe?
+   → User: "Last 5 years"
+
+4. Any specific regions or categories?
+   → User: "Public high schools in Sydney"
+
+5. Purpose of request? (helps frame the request)
+   → User: "Research on education policy"
+```
+
+**Synonym Expansion:**
+
+```
+User term: "teacher hiring"
+
+Expanded to:
+- teacher recruitment
+- educator employment
+- teaching staff appointments
+- permanent and casual teaching positions
+- teacher workforce data
+```
+
+**Why This Matters:**
+- Government officers search databases using specific terms
+- Missing a synonym means missing relevant documents
+- Legal language increases success rate
+- Reduces back-and-forth with agencies
+
+**Generated Document Includes:**
+- Formal applicant details
+- Clear scope of request with expanded terminology
+- Specific timeframe and geographic boundaries
+- Legal basis for the request
+- Preferred format for receiving information
+
+**Session Management:**
+- In-memory session store per user
+- Maintains context across multiple questions
+- Allows resuming incomplete requests
+- Auto-generates title from conversation
+
+---
+
+#### 3️⃣ Social Media Integration Tools
+
+**Location:** `server/tools/social_media_poster.py` and `direct_social_media.py`
+
+**Purpose:** Post content to Twitter, Facebook, and Instagram with media support.
+
+**Supported Platforms:**
+
+| Platform | Capabilities | Media Support |
+|----------|-------------|---------------|
+| **Twitter** | Post tweets, upload media | Images, videos, GIFs |
+| **Facebook** | Post to pages, upload photos | Images, videos |
+| **Instagram** | Business account posts | Images (Business accounts only) |
+
+**Key Functions:**
+
+1. **upload_media_to_twitter(image_path)**
+   - Uploads image/video to Twitter
+   - Returns media_id for posting
+   - Supports multiple media per tweet
+
+2. **post_to_twitter(text, image_path)**
+   - Posts text with optional media
+   - Auto-handles media upload
+   - Returns success/failure status
+
+3. **post_to_facebook_page(page_id, message, image_path)**
+   - Posts to Facebook page
+   - Requires page access token
+   - Supports photo attachments
+
+4. **post_to_instagram(image_path, caption)**
+   - Posts to Instagram Business account
+   - Requires business account connection
+   - Image is required (Instagram is visual-first)
+
+**Authentication:**
+- All tools use Composio SDK
+- OAuth handled automatically
+- User must authorize platforms first
+- Check status: `/toolkits/{user_id}/status`
+- Authorize: `/toolkits/{user_id}/authorize/{platform}`
+
+**Example Usage:**
+
+```python
+from server.tools.social_media_poster import post_to_twitter
+
+result = post_to_twitter(
+    text="Check out our new product! 🚀",
+    image_path="/path/to/image.jpg"
+)
+# Returns: "✅ Posted successfully! Tweet ID: 123456789"
+```
+
+---
+
+#### 4️⃣ Quote Generator Tools
+
+**Location:** `server/tools/` - Three different generators available
+
+**Purpose:** Create visually appealing quote images for social media sharing.
+
+**Three Options:**
+
+##### A. Pillow Quote Generator (`pillow_quote_generator.py`)
+
+**Technology:** Python Pillow (PIL) library
+
+**Features:**
+- Fast, no external API calls
+- Customizable fonts, colors, backgrounds
+- Gradient backgrounds
+- Text wrapping and alignment
+- Watermark support
+
+**Example:**
+```python
+from server.tools.pillow_quote_generator import generate_quote_image
+
+generate_quote_image(
+    quote="Success is not final, failure is not fatal.",
+    author="Winston Churchill",
+    output_path="quote.png",
+    background_color="#1a1a2e",
+    text_color="#eee"
+)
+```
+
+##### B. DALL-E Quote Generator (`dalle_quote_generator.py`)
+
+**Technology:** OpenAI DALL-E API
+
+**Features:**
+- AI-generated artistic backgrounds
+- Unique visual style for each quote
+- Professional looking results
+- Requires OpenAI API key
+
+**Example:**
+```python
+from server.tools.dalle_quote_generator import generate_dalle_quote
+
+generate_dalle_quote(
+    quote="Dream big, work hard",
+    author="Anonymous",
+    style="minimalist modern",
+    output_path="quote.png"
+)
+```
+
+##### C. Avatar Quote Generator (`avatar_quote_generator.py`)
+
+**Technology:** Custom avatar generation + text overlay
+
+**Features:**
+- Generates unique avatar/icon
+- Combines with quote text
+- Branded look and feel
+- Consistent style across posts
+
+**When To Use Which:**
+
+| Generator | Best For | Pros | Cons |
+|-----------|----------|------|------|
+| **Pillow** | Batch generation, consistent branding | Fast, free, offline | Basic visuals |
+| **DALL-E** | Unique artistic posts | Beautiful, creative | Costs money, slower |
+| **Avatar** | Personal branding, influencer content | Distinctive style | Limited customization |
+
+---
+
+#### 5️⃣ PDF Generator Tool
+
+**Location:** `server/tools/pdf_generator.py`
+
+**Purpose:** Convert Markdown content to professional PDF reports.
+
+**Technology:** WeasyPrint + custom CSS styling
+
+**Features:**
+- Markdown to PDF conversion
+- Custom styling with CSS
+- Header and footer support
+- Page numbers
+- Table of contents
+- Syntax highlighting for code blocks
+- Responsive tables and images
+
+**Example Usage:**
+
+```python
+from server.tools.pdf_generator import generate_pdf_report
+
+markdown_content = """
+# Q3 Financial Report
+
+## Executive Summary
+Revenue exceeded expectations...
+
+## Detailed Analysis
+...
+"""
+
+pdf_path = generate_pdf_report.invoke({
+    "markdown_content": markdown_content,
+    "filename": "q3_report.pdf"
+})
+# Returns: "/path/to/q3_report.pdf"
+```
+
+**Styling Features:**
+- Professional fonts (system fonts)
+- Proper margins and spacing
+- Print-optimized layout
+- Hyperlinks preserved
+- Images embedded
+
+**Use Cases:**
+- ✅ Email analysis reports
+- ✅ Fact-checking dossiers
+- ✅ Meeting preparation documents
+- ✅ Research summaries
+- ✅ GIPA request documents
+
+---
+
+#### 6️⃣ Strategy Diagram Agent
+
+**Location:** `server/tools/strategy_diagram_agent.py`
+
+**Purpose:** Generate visual strategy diagrams and flowcharts.
+
+**What It Does:**
+- Converts textual strategy into visual diagram
+- Creates flowcharts, process diagrams
+- Exports as images (PNG/SVG)
+
+**Example Use Cases:**
+- Business strategy visualization
+- Project workflow diagrams
+- Decision tree illustrations
+- Process flow documentation
+
+---
+
+### 🎯 How The Advanced Features Work Together
+
+**Example: Complete Email Research Workflow**
+
+```
+1. USER: "Analyze this email and check the facts"
+
+2. SESSION SYSTEM:
+   - Creates or retrieves user session
+   - Stores user message in database
+
+3. EMAIL ANALYSIS AGENTS:
+   - Agent 1: Extracts claims from email
+   - Agent 2: Plans research strategy
+   - Agent 3: Executes web searches
+   - Agent 4: Generates fact-check report
+
+4. PDF GENERATOR:
+   - Converts report to professional PDF
+
+5. SESSION SYSTEM:
+   - Stores assistant response
+   - Updates session timestamp
+
+6. USER receives:
+   - Markdown report in chat
+   - PDF download link
+   - All sources cited
+```
+
+**Example: Social Media Campaign Workflow**
+
+```
+1. USER: "Create a motivational quote and post to Twitter"
+
+2. QUOTE GENERATOR:
+   - Generates quote with DALL-E or Pillow
+   - Saves image to disk
+
+3. SOCIAL MEDIA POSTER:
+   - Uploads image to Twitter
+   - Posts tweet with image
+   - Returns tweet URL
+
+4. SESSION SYSTEM:
+   - Saves entire conversation
+   - User can see history later
+```
+
+**Example: Meeting Prep Workflow**
+
+```
+1. USER: "Generate meeting dossier for Elon Musk"
+
+2. DOSSIER AGENT:
+   - Collects data from web sources
+   - Synthesizes information
+   - Analyzes for strategic insights
+   - Generates formatted document
+
+3. PDF GENERATOR:
+   - Converts to professional PDF
+
+4. USER receives:
+   - One-page executive summary
+   - Key talking points
+   - Recent news and context
+   - Download-ready PDF
+```
+
+
+
+---
+
 ## 🎨 Gmail Chatbot UI (Frontend)
 
 ### Frontend Folder Structure
@@ -1370,24 +2188,37 @@ import Button from '@/components/Button';
 1. **Separation of Concerns**
    - Frontend focuses on UI/UX
    - Backend focuses on business logic
-   - AI focuses on intent parsing
-   - Composio focuses on Gmail integration
+   - AI focuses on intent parsing and analysis
+   - Composio focuses on external integrations (Gmail, social media)
+   - Specialized agents handle complex tasks (fact-checking, dossier generation, GIPA)
 
 2. **Scalable**
    - Easy to add new actions (delete email, search, etc.)
    - Easy to add other tools (Slack, Calendar, etc.)
    - Easy to add user authentication
+   - Multi-agent architecture allows parallel task execution
+   - Session management supports unlimited concurrent users
 
 3. **Maintainable**
-   - Well-organized code
+   - Well-organized code with clear directory structure
    - Each file has clear responsibility
    - Type safety with TypeScript and Pydantic
+   - Modular agent system - add/remove agents independently
+   - Comprehensive error handling at every layer
 
 4. **Modern Tech Stack**
    - FastAPI - fastest Python framework
    - Next.js - best React framework
-   - Groq - fastest LLM
-   - Composio - easiest integration
+   - Groq + Gemini - fastest LLMs for different use cases
+   - Composio - easiest integration platform
+   - SQLite - lightweight, reliable persistence
+
+5. **Advanced Capabilities**
+   - Multi-agent systems for complex reasoning
+   - Real-time web research with Google Grounding
+   - Persistent conversation context across sessions
+   - Professional document generation (PDF, GIPA, dossiers)
+   - Multi-platform social media integration
 
 ### Key Takeaways
 
@@ -1395,8 +2226,13 @@ import Button from '@/components/Button';
 |----------|-----------|--------|
 | **Backend Framework** | FastAPI | Fast, modern, auto docs |
 | **Frontend Framework** | Next.js | Production-ready, SEO friendly |
-| **AI/LLM** | Groq (Llama 3.3) | Extremely fast, free |
+| **AI/LLM** | Groq (Llama 3.3) + Gemini 2.0 Flash | Fast inference, diverse capabilities |
 | **Gmail Integration** | Composio | Simplifies OAuth & API calls |
+| **Social Media** | Composio (Twitter, Facebook, Instagram) | Unified multi-platform API |
+| **Database** | SQLite | Lightweight, serverless, reliable |
+| **Web Research** | Google Grounding + Serper | Real-time search with citations |
+| **Image Generation** | DALL-E, Pillow, Gemini | Multiple options for different needs |
+| **PDF Generation** | WeasyPrint, ReportLab | Professional document output |
 | **Styling** | Tailwind CSS | Utility-first, consistent |
 | **Type Safety** | TypeScript + Pydantic | Catch errors early |
 | **State Management** | React useState | Simple, built-in |
@@ -1404,29 +2240,103 @@ import Button from '@/components/Button';
 
 ### Complete Data Flow
 
+**Simple Email Action:**
 ```
 User Input → Frontend (React) → Backend API (FastAPI) → AI (Groq) → 
 Backend Logic → Composio SDK → Gmail API → Response → 
 Backend → Frontend → UI Update
 ```
 
+**Advanced Multi-Agent Analysis:**
+```
+User Request → Session Manager → Email Analysis Agent → 
+Research Planning Agent → Web Research Agent (Google Grounding) → 
+Report Generation Agent → PDF Generator → Response with Sources → 
+Session Storage → Frontend Display
+```
+
+**Social Media Workflow:**
+```
+User Command → Intent Parser → Quote Generator (DALL-E/Pillow) → 
+Social Media Poster → Composio SDK → Twitter/Facebook/Instagram API → 
+Success Response → Session History
+```
+
 ### Most Important Files
 
+**Core System:**
 1. **`server/api.py`** - Routing & endpoints
-2. **`server/chatbot.py`** - AI logic
+2. **`server/chatbot.py`** - AI logic and intent parsing
 3. **`server/actions.py`** - Gmail operations
-4. **`src/app/page.tsx`** - Chat UI
-5. **`server/auth.py`** - OAuth flow
+4. **`server/auth.py`** - OAuth flow
+5. **`src/app/page.tsx`** - Chat UI
+
+**Advanced Features:**
+6. **`server/sessions.py`** - Chat history persistence
+7. **`server/email_analysis_agents.py`** - Multi-agent fact-checking
+8. **`server/tools/dossier_agent/`** - Meeting preparation system
+9. **`server/tools/gipa_agent/`** - GIPA request generator
+10. **`server/tools/social_media_poster.py`** - Multi-platform posting
+
+### System Capabilities Summary
+
+| Category | Features |
+|----------|----------|
+| **Email Management** | Send, fetch, draft, analyze emails |
+| **AI Analysis** | Multi-agent fact-checking, claim verification, web research |
+| **Social Media** | Post to Twitter, Facebook, Instagram with media |
+| **Document Generation** | PDF reports, GIPA requests, meeting dossiers |
+| **Image Creation** | Quote generators (DALL-E, Pillow, Avatar) |
+| **Research** | Real-time web search, source citation, credibility assessment |
+| **Persistence** | Session management, chat history, conversation context |
+| **Integrations** | Gmail, Twitter, Facebook, Instagram via Composio |
+
+### What Makes This Project Unique
+
+1. **Multi-Agent Architecture**: Not just a simple chatbot - uses specialized AI agents working together
+2. **Real Web Research**: Google Grounding provides actual sources, not hallucinated information
+3. **Professional Output**: Generates publication-ready PDFs and formal documents
+4. **Multi-Platform**: One interface for email, social media, research, and document generation
+5. **Session Persistence**: Maintains context across conversations
+6. **Modular Design**: Easy to add new agents, tools, or platforms
+
+### Future Enhancement Possibilities
+
+- 📧 More email providers (Outlook, iCloud)
+- 🗓️ Calendar integration (Google Calendar, Outlook)
+- 📱 More social platforms (LinkedIn, TikTok)
+- 🤖 More specialized agents (legal analysis, medical research)
+- 🔐 User authentication and multi-user support
+- 📊 Analytics and usage dashboards
+- 🌐 Multi-language support
+- 🔄 Automated workflows and scheduled tasks
 
 ---
 
 ## 📚 Resources
 
+**Core Technologies:**
 - [FastAPI Docs](https://fastapi.tiangolo.com)
 - [Next.js Docs](https://nextjs.org/docs)
 - [Composio Docs](https://docs.composio.dev)
 - [Groq API Docs](https://console.groq.com/docs)
 - [Tailwind CSS Docs](https://tailwindcss.com/docs)
+
+**AI & LLM:**
+- [Google Gemini Docs](https://ai.google.dev/docs)
+- [LangChain Docs](https://python.langchain.com/docs/)
+- [Google Grounding with Search](https://ai.google.dev/gemini-api/docs/grounding)
+
+**Integrations:**
+- [Gmail API](https://developers.google.com/gmail/api)
+- [Twitter API](https://developer.twitter.com/en/docs)
+- [Facebook Graph API](https://developers.facebook.com/docs/graph-api)
+- [Instagram API](https://developers.facebook.com/docs/instagram-api)
+
+**Tools & Libraries:**
+- [WeasyPrint (PDF)](https://weasyprint.org/)
+- [Pillow (Images)](https://pillow.readthedocs.io/)
+- [SQLite Docs](https://www.sqlite.org/docs.html)
 
 ---
 
