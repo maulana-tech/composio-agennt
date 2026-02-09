@@ -7,7 +7,7 @@ jurisdiction config, boilerplate clauses, and AI-generated keyword definitions.
 The output follows the strict legal document structure:
   Header -> Legal Standing -> Search Protocol -> Scope & Definitions
 
-Output format is Markdown, compatible with the existing PDF generator.
+Output format is Markdown, suitable for use as an email body.
 """
 
 from datetime import date
