@@ -158,7 +158,7 @@ Semua didefinisikan di `gmail-agent/server/tools/gipa_agent/gipa_agent.py`.
 |---|---|---|---|
 | 33 | `gipa_start_request` | 282 | Mulai sesi GIPA request baru |
 | 34 | `gipa_process_answer` | 300 | Proses jawaban user selama klarifikasi |
-| 35 | `gipa_generate_document` | 322 | Generate dokumen aplikasi GIPA formal |
+| 35 | `gipa_generate_document` | 322 | Generate dokumen aplikasi GIPA formal + email draft instructions (main agent must then call GMAIL_CREATE_EMAIL_DRAFT) |
 | 36 | `gipa_check_status` | 347 | Cek status sesi GIPA |
 | 37 | `gipa_expand_keywords` | 401 | Ekspansi keywords ke definisi hukum |
 
