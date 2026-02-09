@@ -1448,7 +1448,7 @@ When a user wants to make a GIPA request, FOI request, or government information
 **IMPORTANT - When user says "generate", "siapkan", "buat dokumen", "yes", "iya", "confirm":**
 → Call `gipa_check_status` first. If status is "READY", call `gipa_generate_document` immediately.
 → NEVER call `gipa_start_request` when the user is confirming or asking to generate!
-→ After `gipa_generate_document` returns, you MUST immediately call `GMAIL_CREATE_EMAIL_DRAFT` with the generated document as the email body (converted to HTML). The recipient email and subject line are provided in the output. Then tell the user the draft is ready for review in Gmail.
+→ After `gipa_generate_document` returns, you MUST immediately call `GMAIL_CREATE_EMAIL_DRAFT`. The output contains a ```html block — use that HTML exactly as the `body` parameter. The recipient email and subject line are also provided. Do NOT modify the HTML. Then tell the user the draft is ready for review in Gmail.
 
 **Important GIPA Rules:**
 - This is for New South Wales. Use "GIPA Act" terminology, NOT "FOI" (that's Federal/Commonwealth).
