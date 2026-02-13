@@ -41,7 +41,11 @@ from .models import (
     LinkedInCompanyInfoRequest,
 )
 from .auth import (
-    create_connection,
+    connect_gmail,
+    connect_twitter,
+    connect_facebook,
+    connect_instagram,
+    connect_linkedin,
     check_connected_account_exists,
     get_connection_status,
     check_twitter_connected,
@@ -49,7 +53,6 @@ from .auth import (
     check_instagram_connected,
     check_linkedin_connected,
     get_connected_accounts,
-    create_social_connection,
 )
 from .actions import send_email, fetch_emails, create_draft
 from .actions import (
@@ -180,7 +183,7 @@ def create_app() -> FastAPI:
         request: CreateConnectionRequest, composio_client: ComposioClient
     ) -> CreateConnectionResponse:
         try:
-            conn = create_connection(
+            conn = connect_gmail(
                 composio_client, request.user_id, request.auth_config_id
             )
             return CreateConnectionResponse(
@@ -243,8 +246,18 @@ def create_app() -> FastAPI:
                 detail=f"Invalid platform. Use: {', '.join(valid_platforms)}",
             )
 
+
         try:
-            connection = create_social_connection(composio_client, user_id, platform)
+            if platform == "TWITTER":
+                connection = connect_twitter(composio_client, user_id)
+            elif platform == "FACEBOOK":
+                connection = connect_facebook(composio_client, user_id)
+            elif platform == "INSTAGRAM":
+                connection = connect_instagram(composio_client, user_id)
+            elif platform == "LINKEDIN":
+                connection = connect_linkedin(composio_client, user_id)
+            else:
+                raise HTTPException(status_code=400, detail="Invalid platform")
             return {
                 "success": True,
                 "user_id": user_id,
@@ -749,16 +762,25 @@ def create_app() -> FastAPI:
             if not image_path:
                 raise HTTPException(status_code=400, detail="Image path is required")
 
-            from .tools.social_media_poster import post_to_twitter, post_to_facebook
+            from .tools.social_media_agent_tool import get_social_media_tools
+
+            # Get tool instance for this user
+            tools = get_social_media_tools(user_id)
+            tool_map = {t.name: t for t in tools}
 
             if platform.lower() == "twitter":
-                result = post_to_twitter.invoke(
-                    {"text": caption, "image_path": image_path}
-                )
+                # Find the twitter tool
+                twitter_tool = tool_map.get("post_to_twitter")
+                if twitter_tool:
+                    result = twitter_tool.invoke({"text": caption, "image_path": image_path})
+                else:
+                    raise HTTPException(status_code=500, detail="Twitter tool not found")
             elif platform.lower() == "facebook":
-                result = post_to_facebook.invoke(
-                    {"message": caption, "image_path": image_path}
-                )
+                facebook_tool = tool_map.get("post_to_facebook")
+                if facebook_tool:
+                    result = facebook_tool.invoke({"message": caption, "image_path": image_path})
+                else:
+                    raise HTTPException(status_code=500, detail="Facebook tool not found")
             else:
                 raise HTTPException(
                     status_code=400,
@@ -855,7 +877,7 @@ def create_app() -> FastAPI:
     async def gipa_status(request: GIPAStartRequest):
         """Check the current status of a GIPA request session."""
         try:
-            from .tools.gipa_agent.gipa_agent import _gipa_sessions
+            from .tools.gipa_agent_tool import _gipa_sessions
 
             session = _gipa_sessions.get(request.session_id)
             if session is None:
@@ -878,7 +900,7 @@ def create_app() -> FastAPI:
     async def gipa_start(request: GIPAStartRequest):
         """Start a new GIPA request session and return the first clarification question."""
         try:
-            from .tools.gipa_agent import GIPARequestAgent
+            from .tools.gipa_agent_tool import GIPARequestAgent
 
             agent = GIPARequestAgent()
             message = await agent.start_request(request.session_id)
@@ -894,8 +916,7 @@ def create_app() -> FastAPI:
     async def gipa_answer(request: GIPAAnswerRequest):
         """Process a user's answer during GIPA clarification and return the next question."""
         try:
-            from .tools.gipa_agent import GIPARequestAgent
-            from .tools.gipa_agent.gipa_agent import _gipa_sessions
+            from .tools.gipa_agent_tool import GIPARequestAgent, _gipa_sessions
 
             agent = GIPARequestAgent()
             message = await agent.process_answer(request.session_id, request.answer)
@@ -912,8 +933,7 @@ def create_app() -> FastAPI:
     async def gipa_generate(request: GIPAGenerateRequest):
         """Generate the formal GIPA application document from collected data."""
         try:
-            from .tools.gipa_agent import GIPARequestAgent
-            from .tools.gipa_agent.gipa_agent import _gipa_sessions
+            from .tools.gipa_agent_tool import GIPARequestAgent, _gipa_sessions
 
             agent = GIPARequestAgent()
             document = await agent.generate_document(request.session_id)
@@ -944,7 +964,7 @@ def create_app() -> FastAPI:
     async def gipa_expand_keywords(request: GIPAExpandKeywordsRequest):
         """Expand keywords into legally robust definitions for GIPA/FOI scope."""
         try:
-            from .tools.gipa_agent import SynonymExpander
+            from .tools.gipa_agent_tool import SynonymExpander
 
             expander = SynonymExpander()
             definitions = await expander.expand_keywords(request.keywords)
@@ -963,7 +983,7 @@ def create_app() -> FastAPI:
     async def dossier_status(request: DossierStatusRequest):
         """Check the current status of a dossier/meeting prep session."""
         try:
-            from .tools.dossier_agent.dossier_agent import _dossier_sessions
+            from .tools.dossier_agent_tool import _dossier_sessions
 
             session = _dossier_sessions.get(request.dossier_id)
             if session is None:
@@ -986,7 +1006,7 @@ def create_app() -> FastAPI:
     async def dossier_generate_endpoint(request: DossierGenerateRequest):
         """Generate a comprehensive meeting prep dossier for a person."""
         try:
-            from .tools.dossier_agent.dossier_agent import _get_agent, _dossier_sessions
+            from .tools.dossier_agent_tool import _get_agent, _dossier_sessions
 
             agent = _get_agent()
             document = await agent.generate_dossier(
@@ -1018,7 +1038,7 @@ def create_app() -> FastAPI:
     async def dossier_update_endpoint(request: DossierUpdateRequest):
         """Update an existing dossier with additional meeting context."""
         try:
-            from .tools.dossier_agent.dossier_agent import _get_agent, _dossier_sessions
+            from .tools.dossier_agent_tool import _get_agent, _dossier_sessions
 
             agent = _get_agent()
             document = await agent.update_dossier(
@@ -1040,7 +1060,7 @@ def create_app() -> FastAPI:
     async def dossier_get_document_endpoint(dossier_id: str):
         """Retrieve a generated dossier document."""
         try:
-            from .tools.dossier_agent.dossier_agent import _dossier_sessions
+            from .tools.dossier_agent_tool import _dossier_sessions
 
             session = _dossier_sessions.get(dossier_id)
             if session is None:
@@ -1068,10 +1088,7 @@ def create_app() -> FastAPI:
     async def dossier_delete_endpoint(dossier_id: str):
         """Delete a dossier session and free its resources."""
         try:
-            from .tools.dossier_agent.dossier_agent import (
-                _dossier_sessions,
-                _clear_session,
-            )
+            from .tools.dossier_agent_tool import _dossier_sessions
 
             session = _dossier_sessions.get(dossier_id)
             if session is None:
@@ -1081,7 +1098,8 @@ def create_app() -> FastAPI:
                     status="none",
                 )
             name = session.get("name", "Unknown")
-            _clear_session(dossier_id)
+            if dossier_id in _dossier_sessions:
+                del _dossier_sessions[dossier_id]
             return DossierResponse(
                 success=True,
                 message=f"Dossier session for '{name}' has been deleted.",
