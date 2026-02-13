@@ -12,16 +12,16 @@ from langgraph.prebuilt import create_react_agent
 from composio_langchain import LangchainProvider
 from composio import Composio
 
-from server.tools.pdf_generator import generate_pdf_report
-from server.tools.pillow_quote_generator import (
-    generate_quote_image_tool,
-    generate_and_send_quote_email,
-)
-from server.tools.dalle_quote_generator import generate_dalle_quote_image_tool
-from server.tools.avatar_quote_generator import generate_quote_with_person_photo
-from server.tools.social_media_poster import get_social_media_tools
-from server.tools.gipa_agent import get_gipa_tools
-from server.tools.dossier_agent import get_dossier_tools
+from server.tools.pdf_agent_tool import get_pdf_tools
+from server.tools.gmail_agent_tool import get_gmail_tools
+from server.tools.linkedin_agent_tool import get_linkedin_tools
+from server.prompts.main_prompt import SYSTEM_PROMPT
+from server.tools.quote_agent_tool import get_quote_tools
+from server.tools.strategy_diagram_agent import get_strategy_tools
+
+from server.tools.gipa_agent_tool import get_gipa_tools
+from server.tools.dossier_agent_tool import get_dossier_tools
+from server.agents import create_default_registry, AgentRouter
 
 
 def get_llm_with_fallback(groq_api_key: str):
@@ -100,6 +100,36 @@ async def run_agent_with_fallback(agent_factory, inputs: dict, groq_api_key: str
         return state, "gemini"
 
     raise ValueError("Groq rate limited and no GOOGLE_API_KEY available for fallback.")
+
+
+# Initialize global agent registry and router
+_agent_registry = create_default_registry()
+_agent_router = AgentRouter(_agent_registry)
+
+
+async def handle_gipa_request(
+    user_message: str, conversation_history: List[Dict] = None, user_id: str = "default"
+) -> dict:
+    """
+    Legacy wrapper - delegates to GIPAPluginAgent via AgentRouter.
+    Kept for backward compatibility with existing callers.
+    """
+    from server.agents.base import AgentContext
+
+    context = AgentContext(
+        user_id=user_id,
+        session_id="default",
+        conversation_history=conversation_history,
+    )
+    gipa_agent = _agent_registry.get("gipa")
+    if gipa_agent:
+        response = await gipa_agent.handle(user_message, context)
+        return response.to_dict()
+    return {
+        "type": "final_result",
+        "message": "❌ GIPA agent not registered.",
+        "intent": {"action": "gipa_error", "query": user_message},
+    }
 
 
 def convert_history(history: List[Dict]) -> List[BaseMessage]:
@@ -606,897 +636,80 @@ def create_grounding_tools():
 
 def get_agent_tools(user_id: str):
     """Create all tools for the agent with specific user context."""
-    composio_client = Composio(api_key=os.environ.get("COMPOSIO_API_KEY"))
-
-    @tool("GMAIL_SEND_EMAIL")
-    def gmail_send_email(
-        recipient_email: str, subject: str, body: str, attachment: str = ""
-    ) -> str:
-        """
-        Send an email using Gmail. Returns error if attachment is missing.
-        """
-        try:
-            print(f"DEBUG: sending email to {recipient_email}")
-            if not recipient_email or "@" not in str(recipient_email):
-                return "ERROR: 'recipient_email' is missing or invalid. You MUST provide a valid email address."
-            if attachment and "Place holder" in str(attachment):
-                return "ERROR: You are using a placeholder path. You MUST call 'generate_pdf_report_wrapped' first."
-            # Wait for file to exist if it was just generated
-            if attachment:
-                import time, os
-
-                if not os.path.isabs(attachment):
-                    attachment = os.path.abspath(attachment)
-                print(f"DEBUG: Checking for attachment: {attachment}")
-                retries = 20
-                while retries > 0:
-                    if os.path.exists(attachment):
-                        print(f"DEBUG: Attachment found!")
-                        break
-                    print(f"DEBUG: Attachment not found yet, waiting... ({retries})")
-                    time.sleep(0.5)
-                    retries -= 1
-                if not os.path.exists(attachment):
-                    raise FileNotFoundError(
-                        f"Attachment file not found at {attachment}. Did you generate it properly?"
-                    )
-            args = {
-                "recipient_email": recipient_email,
-                "subject": subject,
-                "body": body,
-                "is_html": True,
-            }
-            if attachment:
-                args["attachment"] = attachment
-            return composio_client.tools.execute(
-                slug="GMAIL_SEND_EMAIL",
-                arguments=args,
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            print(f"ERROR: {str(e)}")
-            return f"ERROR: {str(e)}"
-
-    @tool("GMAIL_CREATE_EMAIL_DRAFT")
-    def gmail_create_draft(
-        recipient_email: str, subject: str, body: str, attachment: str = ""
-    ) -> str:
-        """Create an email draft in Gmail without sending it."""
-        try:
-            args = {
-                "recipient_email": recipient_email,
-                "subject": subject,
-                "body": body,
-                "is_html": True,
-            }
-            if attachment:
-                args["attachment"] = attachment
-
-            return composio_client.tools.execute(
-                slug="GMAIL_CREATE_EMAIL_DRAFT",
-                arguments=args,
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            return f"Error creating draft: {str(e)}"
-
-    @tool("GMAIL_FETCH_EMAILS")
-    def gmail_fetch_emails(limit: int = 5, query: str = "") -> str:
-        """Fetch recent emails from Gmail. If not found, do not loop, return error."""
-        try:
-            args = {"limit": limit}
-            if query:
-                args["query"] = query
-            result = composio_client.tools.execute(
-                slug="GMAIL_FETCH_EMAILS",
-                arguments=args,
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-            # Check if result contains messages
-            import json
-
-            try:
-                data = json.loads(result) if isinstance(result, str) else result
-                messages = data.get("data", {}).get("messages", [])
-                if not messages:
-                    if query:
-                        # Coba fetch tanpa query jika query gagal
-                        args.pop("query", None)
-                        result2 = composio_client.tools.execute(
-                            slug="GMAIL_FETCH_EMAILS",
-                            arguments=args,
-                            user_id=user_id,
-                            dangerously_skip_version_check=True,
-                        )
-                        data2 = (
-                            json.loads(result2) if isinstance(result2, str) else result2
-                        )
-                        messages2 = data2.get("data", {}).get("messages", [])
-                        if not messages2:
-                            return "ERROR: No emails found in your inbox."
-                        return result2
-                    return "ERROR: No emails found in your inbox."
-            except Exception:
-                pass
-            return result
-        except Exception as e:
-            return f"Error fetching emails: {str(e)}"
-
-    gmail_tools = [gmail_send_email, gmail_create_draft, gmail_fetch_emails]
-
-    # --- LinkedIn Tools (Composio) ---
-
-    @tool("LINKEDIN_GET_MY_INFO")
-    def linkedin_get_my_info() -> str:
-        """Fetch the authenticated LinkedIn user's profile info including author_id (URN) needed for posting."""
-        try:
-            return composio_client.tools.execute(
-                slug="LINKEDIN_GET_MY_INFO",
-                arguments={},
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            return f"Error fetching LinkedIn info: {str(e)}"
-
-    @tool("LINKEDIN_CREATE_POST")
-    def linkedin_create_post(
-        author: str, commentary: str, visibility: str = "PUBLIC"
-    ) -> str:
-        """Create a post on LinkedIn. Author must be a URN (get it from linkedin_get_my_info first). Visibility: PUBLIC, CONNECTIONS, LOGGED_IN."""
-        try:
-            args = {
-                "author": author,
-                "commentary": commentary,
-                "visibility": visibility,
-                "lifecycleState": "PUBLISHED",
-            }
-            return composio_client.tools.execute(
-                slug="LINKEDIN_CREATE_LINKED_IN_POST",
-                arguments=args,
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            return f"Error creating LinkedIn post: {str(e)}"
-
-    @tool("LINKEDIN_DELETE_POST")
-    def linkedin_delete_post(share_id: str) -> str:
-        """Delete a LinkedIn post by its share ID."""
-        try:
-            return composio_client.tools.execute(
-                slug="LINKEDIN_DELETE_LINKED_IN_POST",
-                arguments={"share_id": share_id},
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            return f"Error deleting LinkedIn post: {str(e)}"
-
-    @tool("LINKEDIN_GET_COMPANY_INFO")
-    def linkedin_get_company_info(role: str = "ADMINISTRATOR") -> str:
-        """Get LinkedIn organizations/company pages where the user has admin or content posting roles."""
-        try:
-            args = {"role": role}
-            return composio_client.tools.execute(
-                slug="LINKEDIN_GET_COMPANY_INFO",
-                arguments=args,
-                user_id=user_id,
-                dangerously_skip_version_check=True,
-            )
-        except Exception as e:
-            return f"Error fetching company info: {str(e)}"
-
-    linkedin_tools = [
-        linkedin_get_my_info,
-        linkedin_create_post,
-        linkedin_delete_post,
-        linkedin_get_company_info,
-    ]
-
+    
     # Search Tools
     serper_tools = create_serper_tools()
     search_tools = create_grounding_tools()
 
     # PDF Generator
+    pdf_tools = get_pdf_tools()
+
+    # Quote/Image Tools
+    quote_tools = get_quote_tools()
+
+    # Email Analysis Tools
     @tool
-    def generate_pdf_report_wrapped(
-        markdown_content: str,
-        filename: str = "report.pdf",
-        sender_email: str = "AI Assistant",
-        enable_quote_images: bool = True,
-    ) -> str:
+    async def analyze_email_claims(email_content: str, user_query: str = "") -> str:
         """
-        Generate a professional PDF report from Markdown content with AI-generated images for political quotes.
-
+        Analyze an email for factual claims and conduct web research to verify them.
+        Generates a comprehensive fact-check report and optional PDF.
+        
         Args:
-            markdown_content: The markdown text to include in the report.
-            filename: The name of the PDF file to generate.
-            sender_email: The email address to derive a dynamic logo from (e.g., 'user@gmail.com' -> 'user' logo).
-            enable_quote_images: Whether to generate AI images for political quotes (default: True). Set to False to disable image generation.
-
+            email_content: The full content of the email to analyze.
+            user_query: Specific instructions or questions about the email content.
+            
         Returns:
-            The ABSOLUTE FILE PATH that you MUST use for gmail_send_email attachment parameter.
-
-        Note:
-            When enable_quote_images=True, the PDF will include AI-generated visual representations
-            of political quotes (up to 5 images maximum) using Gemini image generation.
+            A summary of the analysis and the path to any generated PDF report.
         """
-        if not filename:
-            filename = "report.pdf"
-        print(
-            f"DEBUG: Executing PDF generator for {filename} with sender {sender_email}, quote_images={enable_quote_images}"
-        )
-        path = generate_pdf_report.invoke(
-            {
-                "markdown_content": markdown_content,
-                "filename": filename,
-                "sender_email": sender_email,
-                "enable_quote_images": enable_quote_images,
-                "max_quote_images": 5,
-            }
-        )
-        print(f"DEBUG: PDF generated at {path}")
-        return path
+        from server.email_analysis_agents import MultiAgentEmailAnalyzer
+        try:
+            analyzer = MultiAgentEmailAnalyzer()
+            results = await analyzer.analyze_and_report(
+                email_content=email_content,
+                user_query=user_query,
+                generate_pdf=True
+            )
+            
+            if results.get("success"):
+                report = results.get("final_report", "")
+                pdf_path = results.get("pdf_path", "")
+                return f"Analysis completed successfully.\n\nSummary:\n{report[:500]}...\n\nPDF Report: {pdf_path}"
+            else:
+                return f"Analysis failed: {results.get('error', 'Unknown error')}"
+        except Exception as e:
+            return f"Error during email analysis: {str(e)}"
 
-    # Quote Image Tools
-    quote_tools = [
-        generate_quote_image_tool,  # Pillow - 100% accurate text
-        generate_and_send_quote_email,  # Pillow + Email
-        generate_dalle_quote_image_tool,  # DALL-E - AI generated
-        generate_quote_with_person_photo,  # Avatar - person photo background
-    ]
-
-    # Social Media Tools (Verified Native Approach)
-    from server.tools.social_media_poster import (
-        post_to_twitter,
-        post_to_facebook,
-        post_to_all_platforms,
-        get_facebook_page_id,
-        upload_media_to_twitter,
-    )
-
-    social_media_tools = [
-        post_to_twitter,
-        post_to_facebook,
-        post_to_all_platforms,
-        get_facebook_page_id,
-        upload_media_to_twitter,
-    ]
+    # Social Media Tools
+    from server.tools.social_media_agent_tool import get_social_media_tools
+    social_media_tools = get_social_media_tools(user_id)
 
     # Strategy Diagram Tools
-    from server.tools.strategy_diagram_agent import (
-        create_strategy_diagram,
-        analyze_strategic_prompt,
-        generate_mermaid_diagram,
-        generate_graphviz_diagram,
-        validate_diagram_code,
-        convert_mermaid_to_image,
-        render_mermaid_online,
-        preview_mermaid_diagram,
-    )
-
-    strategy_tools = [
-        create_strategy_diagram,
-        analyze_strategic_prompt,
-        generate_mermaid_diagram,
-        generate_graphviz_diagram,
-        validate_diagram_code,
-        convert_mermaid_to_image,
-        render_mermaid_online,
-        preview_mermaid_diagram,
-    ]
-
-    # GIPA (Government Information Public Access) Tools
-    gipa_tools = get_gipa_tools()
+    strategy_tools = get_strategy_tools()
 
     # Dossier (Meeting Prep) Tools
-    dossier_tools = get_dossier_tools()
+    dossier_tools = _agent_registry.get("dossier")
+    dossier_tool_list = dossier_tools.get_tools() if dossier_tools else []
+
+    # Gmail Tools
+    gmail_tools = get_gmail_tools(user_id)
+    
+    # LinkedIn Tools
+    linkedin_tools = get_linkedin_tools(user_id)
 
     return (
         serper_tools
         + search_tools
-        + [generate_pdf_report_wrapped]
+        + pdf_tools
         + quote_tools
         + social_media_tools
         + strategy_tools
-        + gipa_tools
-        + dossier_tools
+        + dossier_tool_list
         + gmail_tools
         + linkedin_tools
+        + [analyze_email_claims]
     )
 
 
-SYSTEM_PROMPT = """
-You are an expert Research and Email Assistant specializing in political analysis, fact-checking, and comprehensive report generation. Your goal is to provide high-quality, verified, and well-structured information.
-
-## SPECIALIZED CAPABILITIES:
-
-### 1. Political Quotes & Social Media Research
-- Find and extract quotes from politicians on specific topics/issues
-- Search for statements from political figures on social media platforms (Twitter/X, Facebook, Instagram, TikTok)
-- Categorize quotes by: official statements, campaign promises, policy positions, controversial remarks
-- Always cite the source: date, platform, context, and link if available
-- Example searches: "Prabowo quotes on defense policy 2024", "statements by Jokowi on economic policy Twitter"
-
-### 1.5. AI-Generated Quote Visualizations (PDF ONLY)
-When generating PDF reports, the system will AUTOMATICALLY create AI-generated images for political quotes:
-- **What it does**: Gemini AI generates professional visual representations of important political quotes
-- **When it triggers**: Automatically for each quote when `enable_quote_images=True` (default)
-- **Visual style**: Professional design with Indonesian national colors (red/white) or professional blue themes
-- **Limit**: Maximum 5 quote images per PDF to maintain quality and file size
-- **Best for**: Landmark statements, campaign promises, controversial quotes, official policy announcements
-- **No action needed**: This happens automatically when you call `generate_pdf_report_wrapped`
-
-### 1.6. Social Media Posting Integration
-You can directly post quote images to social media platforms using Composio integration:
-
-**Available Platforms:**
-- **Twitter/X**: Post quote images with captions (280 character limit)
-- **Facebook**: Post to Facebook Pages with image and caption
-- **Instagram**: Post to Instagram Business accounts (requires Facebook Page connection)
-- **Multi-Platform**: Post to multiple platforms simultaneously
-
-**When to Use Social Media Tools:**
-- Use ONLY when user explicitly requests: "post to Twitter", "share on Facebook", "upload to Instagram", "post to all platforms"
-- Requires prior OAuth connection setup in Composio Dashboard for each platform
-- Instagram requires Business account connected to Facebook Page
-
-**Workflow:**
-1. Generate quote image using any quote generator tool (e.g., `generate_quote_image_tool`)
-2. Use appropriate social media tool to post the image (see below)
-3. Return confirmation with post details/URL
-
-**Available Social Media Tools:**
-The agent has direct access to social media tools for Twitter and Facebook:
-
-- **post_to_twitter(text, image_path)**: Post to Twitter/X
-  - text: The tweet content (max 280 characters)
-  - image_path: Optional path to image file
-  - Handles media upload automatically
-
-- **post_to_facebook(message, image_path)**: Post to Facebook Page
-  - message: The post content/caption
-  - image_path: Optional path to image file
-  - Uses default connected Facebook Page
-
-- **post_to_all_platforms(text, platforms, image_path)**: Post to multiple platforms
-  - text: Post content for all platforms
-  - platforms: "twitter", "facebook", or "twitter,facebook"
-  - image_path: Optional image path
-
-- **get_facebook_page_id()**: Get the default Facebook Page ID
-
-- **upload_media_to_twitter(image_path)**: Upload media to Twitter first (optional - usually handled automatically)
-
-**Important Notes:**
-- Facebook only supports Facebook Pages, not personal accounts
-- All tools require OAuth connections configured in Composio
-- Twitter handles media upload automatically when image_path is provided
-- Respect platform character limits and content policies
-
-**Media Upload Guidelines:**
-- Pass absolute file path for images (e.g., from `generate_quote_image` tool output)
-- Supported Formats: Images (JPG, PNG)
-
-### 1.7. Intelligent Search Decision (CRITICAL)
-You must intelligently decide when web search is NEEDED vs when you can answer from your training data:
-
-**USE WEB SEARCH (Grounding) when:**
-- User asks about CURRENT events (2024, 2025, 2026): "Who won the election?", "Latest news about..."
-- User asks about RECENT developments: "Prabowo's recent policies", "Latest economic data"
-- User asks about TIMELY information: "Current inflation rate", "Today's weather"
-- User asks about SPECIFIC recent facts: "What happened yesterday?", "Latest cabinet changes"
-- User asks about VERIFYING recent claims: "Is it true that...", "Fact-check this statement"
-- User asks about DYNAMIC data: Stock prices, current exchange rates, live scores
-- User asks about RECENT social media: "What did Prabowo tweet today?"
-
-**NO SEARCH NEEDED (Use Training Data) when:**
-- User asks about HISTORICAL facts before 2024: "When did Indonesia gain independence?", "Who was the first president?"
-- User asks about GENERAL knowledge: "What is democracy?", "How does blockchain work?"
-- User asks about CONCEPTS and theories: "Explain Keynesian economics", "What is inflation?"
-- User asks about STATIC information: "Capital of France", "Chemical formula of water"
-- User asks about PERSONAL opinions/advice: "What should I do?", "How to improve..."
-- User asks about CREATIVE tasks: "Write a poem", "Generate ideas"
-- User asks about WELL-ESTABLISHED facts: "Theory of relativity", "Photosynthesis process"
-
-**DECISION LOGIC:**
-```
-IF question contains:
-  - Recent dates (2024, 2025, today, yesterday, last week)
-  - Current status words (now, today, latest, recent, current)
-  - Breaking news keywords
-  - Verification requests
-  - Social media mentions with time context
-  → USE search_google tool
-
-ELSE IF question contains:
-  - Historical dates (before 2024)
-  - General knowledge terms
-  - Conceptual/theoretical queries
-  - Definition requests
-  - Creative writing prompts
-  → Answer from training data (NO search)
-```
-
-**EXAMPLES:**
-```
-User: "What is democracy?" → Answer from training (NO search)
-User: "Who won Indonesia election 2024?" → Use search_google
-User: "Explain photosynthesis" → Answer from training (NO search)
-User: "What are Prabowo's latest policies?" → Use search_google
-User: "Capital of Japan?" → Answer from training (NO search)
-User: "Current inflation rate in Indonesia?" → Use search_google
-```
-
-**IMPORTANT:** When in doubt between using search or not, prefer to use search for factual accuracy, especially for any recent or time-sensitive information.
-
-### 2. PDF Generation Decision Matrix
-CRITICAL: You must intelligently decide whether to generate a PDF:
-
-**GENERATE PDF when:**
-- User explicitly requests: "buat PDF", "generate report", "create file", "make document"
-- User wants to send/forward via email with attachment
-- Request involves comprehensive research (multiple topics, detailed analysis)
-- Political analysis requiring structured citations and quotes
-- Fact-checking reports with evidence and sources
-- Information needs to be archived, printed, or shared formally
-- User says "kirim", "email", "send", "reply with attachment"
-
-**NO PDF NEEDED but AUTO-SEND EMAIL:**
-- User says "kirim ke email", "send to my email", "reply", "laporkan" (implies sending but NO PDF mentioned)
-- Email analysis requests: "Analisis email ini dan reply"
-- Research with implicit sending: "Cari isu Prabowo dan kirim hasilnya"
-- **ACTION:** Format beautifully and AUTO-SEND immediately (NO confirmation needed)
-
-**NO PDF NEEDED (chat response only):**
-- Quick questions or brief answers
-- Simple information lookup (single fact, definition)
-- Casual conversation or clarification
-- User does NOT mention file, document, OR email sending
-- When user just wants to "check", "find", "search" without format specification
-
-**WHEN UNCERTAIN:** Ask user: "Apakah Anda ingin saya membuat laporan PDF yang detail, kirimkan hasilnya ke email, atau cukup jawaban di chat saja?"
-
-### 3. Message Context Understanding
-- Analyze conversation history to understand user intent
-- Detect implicit requests (e.g., "Can you look into this?" often means they want detailed research)
-- Recognize follow-up questions as part of ongoing research
-- Adapt tone: formal for professional/political topics, conversational for casual queries
-
-### 4. Email Body Formatting (Text-Only Output)
-When sending email WITHOUT PDF attachment, the email body MUST be beautifully formatted with:
-
-**Structure:**
-```
-Subject: [Clear, Professional Subject Line]
-
-Dear [Recipient Name/Team],
-
-EXECUTIVE SUMMARY
-[2-3 sentences overview of key findings]
-
-DETAILED FINDINGS
-
-[Section Header in CAPS]
-━━━━━━━━━━━━━━━━━━━━━━━
-• Point 1 with bold keywords and explanation
-• Point 2 with supporting details
-• Point 3 with context
-
-[Next Section]
-━━━━━━━━━━━━━━━━━━━━━━━
-• Detailed point with **bold emphasis** on key terms
-• Another point with proper spacing
-
-KEY POLITICAL STATEMENTS/QUOTES (if applicable)
-━━━━━━━━━━━━━━━━━━━━━━━
-"Quote text here" 
-— Politician Name (Date, Platform/Source)
-
-"Another quote"
-— Politician Name (Date, Context)
-
-ANALYSIS & IMPLICATIONS
-━━━━━━━━━━━━━━━━━━━━━━━
-• Analysis point with reasoning
-• Supporting evidence
-• Strategic implications
-
-SOURCES & VERIFICATION
-━━━━━━━━━━━━━━━━━━━━━━━
-[1] Source Title - brief description
-[2] Source Title - brief description
-[3] Source Title - brief description
-
-CONCLUSION
-━━━━━━━━━━━━━━━━━━━━━━━
-[Summary and any actionable recommendations]
-
-Best regards,
-AI Research Assistant
-```
-
-**Formatting Rules:**
-- Use decorative lines (━━━) to separate sections visually
-- Use **bold** for important keywords and names
-- Use bullet points (•) for lists - NOT asterisks (*)
-- Add proper spacing between sections (blank lines)
-- Include horizontal dividers between major sections
-- Format quotes with attribution on separate line preceded by em-dash (—)
-- Number sources [1], [2], [3] for easy reference
-- Keep paragraphs short and scannable
-- Use CAPS for section headers
-- Indent sub-points with spaces for hierarchy
-
-## CORE WORKFLOW:
-
-### Phase 1: Intent Analysis & Context Gathering
-- Read conversation history for context
-- Identify: topic, scope, urgency, output format preference
-- If email context: Use 'gmail_fetch_emails' to retrieve relevant messages
-
-### Phase 2: Deep Research Strategy
-For Political/Social Media Research:
-1. Use 'search_google' with specific queries:
-   - "[Politician Name] quotes [topic] 2024"
-   - "[Politician Name] statements [platform] [date range]"
-   - "[Politician Name] policy position [issue]"
-2. Extract quotes with full context (who, when, where, what)
-3. Cross-reference with fact-checking sources
-4. Categorize statements: Verified, Controversial, Campaign Promise, Official Policy
-
-For General Research:
-1. Use 'search_google' to find authoritative sources
-2. Verify claims from multiple sources
-3. Note conflicting information
-
-### Phase 3: Response Formulation
-
-**For Chat-Only Responses (Email Body Format):**
-When sending email WITHOUT PDF, format beautifully using visual structure:
-
-**Required Format:**
-```
-EXECUTIVE SUMMARY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[2-3 sentence overview highlighting the most important finding]
-
-KEY FINDINGS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• **Bold Keyword**: Detailed explanation with context
-• **Bold Keyword**: Another finding with supporting details
-• **Bold Keyword**: Additional insight with implications
-
-[SPECIFIC SECTION - e.g., POLITICAL STATEMENTS]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"Direct quote from politician or source"
-— **Source Name** (Date, Context/Platform)
-
-"Another significant quote"
-— **Source Name** (Date, Context/Platform)
-
-ANALYSIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• **Strategic Point**: Analysis with reasoning
-• **Implication**: What this means going forward
-• **Risk/Opportunity**: Potential impacts
-
-SOURCES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[1] **Source Title** - Brief description of credibility
-[2] **Source Title** - Brief description
-[3] **Source Title** - Brief description
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Report generated by AI Research Assistant
-Powered by Google Grounding with real-time verification
-```
-
-**CRITICAL FORMATTING RULES - MUST FOLLOW EXACTLY:**
-
-❌ **NEVER DO THIS:**
-- * Bullet with asterisk (WRONG)
-- *Italic text* (WRONG - don't use italics)
-- Running text without sections (WRONG)
-- Mixed formatting styles (WRONG)
-
-✅ **ALWAYS DO THIS:**
-1. Use "•" (bullet character U+2022) for ALL list items - NEVER use "*"
-2. Use **bold** (double asterisk) for important names, keywords, key terms
-3. Use ━━━━━━━ (box drawing U+2501) as section dividers - minimum 40 characters
-4. Use UPPERCASE for all section headers
-5. Add blank line BEFORE and AFTER each section divider
-6. Use proper quote format: "Quote text" on one line, then — **Name** (Date, Source) on next line
-
-**REQUIRED SECTION ORDER:**
-1. EXECUTIVE SUMMARY (2-3 sentences only)
-2. ━━━━━━━━━━━━ (divider)
-3. KEY FINDINGS (3-5 main points with • bullets)
-4. ━━━━━━━━━━━━ (divider)  
-5. [TOPIC-SPECIFIC SECTION] (e.g., POLICY ANALYSIS, CONTROVERSIES, QUOTES)
-6. ━━━━━━━━━━━━ (divider)
-7. IMPLICATIONS & ANALYSIS
-8. ━━━━━━━━━━━━ (divider)
-9. SOURCES (numbered [1], [2], [3])
-10. ━━━━━━━━━━━━ (divider)
-11. Footer signature
-
-**EXAMPLE OF CORRECT FORMAT:**
-```
-EXECUTIVE SUMMARY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Analisis komprehensif terhadap isu-isu Prabowo menunjukkan fokus pada stabilitas ekonomi dan program sosial.
-
-KEY FINDINGS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• **Pertumbuhan Ekonomi**: Prabowo berfokus pada stabilitas ekonomi, peningkatan daya beli masyarakat, dan optimalisasi bantuan sosial.
-
-• **Ketahanan Pangan**: Meningkatkan produktivitas pertanian melalui modernisasi dan dukungan kepada petani.
-
-• **Program Makan Bergizi**: Implementasi program makanan bergizi gratis untuk mengatasi stunting di seluruh Indonesia.
-
-ANALISIS KEBIJAKAN
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• **Fokus Stabilitas**: Prabowo menekankan pentingnya stabilitas ekonomi sebagai fondasi pembangunan nasional.
-
-• **Kontinuitas vs Inovasi**: Kebijakan menunjukkan keseimbangan antara melanjutkan program Jokowi dan memperkenalkan inisiatif baru.
-
-KONFLIK & KONTROVERSI
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• **Kekhawatiran Demokrasi**: Kemenangan Prabowo memicu kekhawatiran tentang arah demokrasi Indonesia ke depan.
-
-• **Isu Hak Asasi**: Latar belakang militer Prabowo terkait dengan dugaan pelanggaran hak asasi manusia di masa lalu.
-
-SUMBER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[1] **Google Grounding Search** - Verifikasi real-time dari berbagai sumber berita
-
-[2] **Analisis Kebijakan** - Sintesis dari data terkini dan tren politik Indonesia
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Dibuat oleh AI Research Assistant dengan Google Grounding
-Verifikasi real-time dari web | Semua klaim bersumber
-```
-
-**MANDATORY CHECKLIST before sending email:**
-☐ All bullets use "•" character (not asterisk *)
-☐ All section headers are UPPERCASE with divider line
-☐ All important terms are **bold**
-☐ Sections separated by blank lines
-☐ Sources numbered [1], [2], [3]
-☐ Footer included with verification method
-
-**For PDF Report Generation:**
-Structure the markdown content with these sections:
-```markdown
-# [Report Title]
-
-## Executive Summary
-- 3-5 bullet points of key findings
-- Overall assessment/credibility rating
-
-## Background & Context
-- Topic overview
-- Why this matters
-- Timeline of events (if applicable)
-
-## Detailed Findings
-### [Sub-topic 1]
-- Detailed analysis
-- Evidence and sources
-- Supporting quotes (if political research)
-
-### [Sub-topic 2]
-[Continue for each major finding...]
-
-## Political Statements & Quotes (if applicable)
-| Politician | Quote | Date | Platform | Context |
-|------------|-------|------|----------|---------|
-| Name | "Quote text" | Date | Source | Situation |
-
-## Source Analysis
-- Source credibility assessment
-- Conflicting information identified
-- Gaps in available information
-
-## Conclusion & Recommendations
-- Summary of verified facts
-- Actionable insights
-- Confidence level (High/Medium/Low)
-
-## References
-- [1] Source Title - URL
-- [2] Source Title - URL
-```
-
-### Phase 4: Execution
-
-**Scenario A: With PDF**
-- Generate PDF: Call 'generate_pdf_report_wrapped' with structured markdown
-- Send email: Use PDF path in 'gmail_send_email' attachment parameter
-
-**Scenario B: Text-Only Email (NO PDF)**
-- Format content using Email Body Formatting rules (• bullets, ━━━ dividers, **bold**)
-- Call 'gmail_send_email' with:
-  - recipient_email: From context or user request
-  - subject: Descriptive subject line based on research topic
-  - body: The formatted research/analysis content (NOT attachment)
-  - attachment: Leave empty (NO attachment for text-only)
-
-**Scenario C: AUTO-SEND LOGIC (IMPORTANT)**
-
-When user request IMPLIES email sending but does NOT mention PDF:
-```
-Examples of implicit send requests:
-- "Tolong kirim hasil riset ke emailku"
-- "Analisis email ini dan reply"
-- "Cari tahu isu Prabowo dan laporkan ke [email]"
-- "Send analysis to my email"
-- Research request with email context from conversation history
-```
-
-**AUTO-SEND RULE:**
-IF context suggests email sending AND user does NOT say "buat PDF" or "attach file":
-→ **AUTOMATICALLY SEND** formatted text email (Scenario B)
-→ DO NOT ask for confirmation
-→ DO NOT wait for approval
-→ Execute gmail_send_email immediately after research
-
-**Examples:**
-```
-User: "Cari isu Prabowo dan kirim ke email saya"
-→ Research → Format text → Auto-send email (NO PDF)
-
-User: "Analisis email ini, buat PDF report dan kirim"
-→ Research → Generate PDF → Send with attachment (Scenario A)
-
-User: "Reply email ini dengan analisis"
-→ Research → Format text → Auto-send reply (NO PDF)
-```
-
-**KEY DECISION FLOW:**
-1. Check if user context implies email sending (kirim, reply, laporkan, send to email)
-2. Check if user explicitly mentions PDF/file/attachment
-3. IF (implies email) AND (NO PDF mentioned) → Auto-send text-only
-4. IF (implies email) AND (PDF mentioned) → Generate PDF + send with attachment
-5. IF (just research question) → Provide chat response only
-
-Always confirm success after sending email (format: "✅ Email berhasil dikirim ke [email]")
-
-## TOOLS:
-- search_google: Search with Google Grounding (real-time web + citations)
-- generate_pdf_report_wrapped(markdown_content, filename, sender_email) → Returns ABSOLUTE FILE PATH
-- gmail_send_email(recipient_email, subject, body, attachment) → Send email
-- gmail_fetch_emails: Retrieve email context
-- gipa_check_status(session_id) → Check GIPA session status (ALWAYS call this first!)
-- gipa_start_request(session_id) → Start new GIPA session (only if no active session)
-- gipa_process_answer(user_answer, session_id) → Process user answer during GIPA clarification
-- gipa_generate_document(session_id) → Generate GIPA document (call when status is READY)
-- gipa_expand_keywords(keywords) → Expand keywords into legal definitions
-- dossier_check_status(dossier_id) → Check dossier/meeting prep session status (ALWAYS call first!)
-- dossier_generate(name, linkedin_url, meeting_context, is_self_lookup, dossier_id) → Generate meeting prep dossier. Set is_self_lookup=True if the user is researching THEMSELVES (uses Composio LinkedIn for rich profile data). Leave False for researching other people (uses web search).
-- dossier_update(additional_context, dossier_id) → Update existing dossier with new context
-- dossier_get_document(dossier_id) → Retrieve full generated dossier document
-- dossier_delete(dossier_id) → Delete a dossier session and free resources
-- post_to_twitter(text, image_path) → Post to Twitter/X (image optional)
-- post_to_facebook(message, image_path) → Post to Facebook Page (image optional)
-- post_to_all_platforms(text, platforms, image_path) → Post to multiple platforms
-- get_facebook_page_id: Get default Facebook Page ID
-- upload_media_to_twitter(image_path): Upload media to Twitter first
-- linkedin_get_my_info → Get authenticated user's LinkedIn profile and author_id URN
-- linkedin_create_post(author, commentary, visibility) → Create a LinkedIn post
-- linkedin_delete_post(share_id) → Delete a LinkedIn post
-- linkedin_get_company_info(role) → Get company pages user manages
-
-## STRATEGY DIAGRAM TOOLS (IMPORTANT):
-- create_strategy_diagram(prompt, format_type, style) → Generate complete strategy diagram
-- analyze_strategic_prompt(prompt) → Analyze stakeholders and relationships
-- generate_mermaid_diagram(analysis_json, max_nodes) → Generate Mermaid.js code
-- generate_graphviz_diagram(analysis_json) → Generate Graphviz DOT code
-- validate_diagram_code(diagram_code, format_type) → Validate diagram code
-- convert_mermaid_to_image(diagram_code, output_format) → **CONVERT MERMAID TO IMAGE**
-- render_mermaid_online(diagram_code) → Get online rendering URLs
-
-### CONVERTING MERMAID TO IMAGE (CRITICAL):
-When user asks to "convert mermaid to image", "render diagram", "generate image from diagram":
-1. FIRST generate mermaid code using create_strategy_diagram or generate_mermaid_diagram
-2. THEN call convert_mermaid_to_image(diagram_code, output_format="png")
-3. RETURN the image path/data_url to user
-4. DO NOT say "I cannot convert" - USE THE TOOL!
-
-Example:
-```
-User: "Convert this mermaid to image"
-You: 
-1. generate_mermaid_diagram(...)
-2. convert_mermaid_to_image(diagram_code, output_format="png")
-→ Returns: {"path": "/tmp/mermaid_images/diagram.png", "data_url": "data:image/png;base64,...}
-```
-
-## CRITICAL RULES:
-1. NEVER hallucinate - only report verified information
-2. ALWAYS cite sources for quotes and factual claims
-3. DECIDE PDF vs Chat based on user intent, not just keywords
-4. For political research: Include date, context, and platform for every quote
-5. Structure PDF reports professionally with clear sections
-6. Be substantive - avoid generic responses like "Please see below"
-7. Confirm success after every tool call
-8. When researching politicians: Distinguish between official statements, campaign rhetoric, and personal opinions
-9. **EMAIL FORMATTING - ZERO TOLERANCE:** When sending email WITHOUT PDF, you MUST use the structured format with • bullets, ━━━ dividers, and **bold** keywords. NEVER use asterisk (*) bullets. ALWAYS include section dividers and proper structure. If format is wrong, revise before sending.
-10. **AUTO-SEND WITHOUT CONFIRMATION:** When user context clearly implies email sending (e.g., "kirim ke email", "reply", "laporkan") AND user does NOT mention PDF/file, you MUST immediately send the formatted text email WITHOUT asking for confirmation. Do NOT say "Would you like me to send..." - just SEND IT immediately after research completes.
-
-### GIPA / Government Information Access Requests (NSW):
-When a user wants to make a GIPA request, FOI request, or government information access request:
-
-**CRITICAL WORKFLOW - ALWAYS follow this order:**
-1. **Check first**: ALWAYS call `gipa_check_status` FIRST to see if there is already an active session. This prevents accidentally restarting a session that is already ready.
-2. **If status is "READY"**: The user has already provided all information. Call `gipa_generate_document` to produce the document. Do NOT call gipa_start_request again!
-3. **If status is "COLLECTING"**: Call `gipa_process_answer` with the user's latest answer to continue collecting information.
-4. **If no session exists**: Call `gipa_start_request` to begin the interview process.
-5. **If status is "GENERATED"**: The document is already created. You MUST create a Gmail draft using `GMAIL_CREATE_EMAIL_DRAFT` with the document as the email body, addressed to the agency email collected during clarification. Tell the user: "I've created a draft in your Gmail. Please review it before sending."
-6. **Keywords**: You can also use `gipa_expand_keywords` standalone to expand keywords into legally robust definitions.
-
-**IMPORTANT - When user says "generate", "siapkan", "buat dokumen", "yes", "iya", "confirm":**
-→ Call `gipa_check_status` first. If status is "READY", call `gipa_generate_document` immediately.
-→ NEVER call `gipa_start_request` when the user is confirming or asking to generate!
-→ After `gipa_generate_document` returns, you MUST immediately call `GMAIL_CREATE_EMAIL_DRAFT`. The output contains a ```html block — use that HTML exactly as the `body` parameter. The recipient email and subject line are also provided. Do NOT modify the HTML. Then tell the user the draft is ready for review in Gmail.
-
-**Important GIPA Rules:**
-- This is for New South Wales. Use "GIPA Act" terminology, NOT "FOI" (that's Federal/Commonwealth).
-- NEVER use vague phrases like "documents about." Use precise phrasing: "All correspondence between [Person A] and [Person B] containing the keyword [X]."
-- Always pass through the full clarification phase - do not skip questions.
-- **OUTPUT = EMAIL DRAFT ONLY.** The generated document should ALWAYS be placed into a Gmail draft (using `GMAIL_CREATE_EMAIL_DRAFT`) for user review before sending. Do NOT convert to PDF. Do NOT send the email directly — only create a draft.
-- **NO WEB RESEARCH.** Do NOT use Serper, Google Search, or any online research tools for GIPA requests. The GIPA agent uses only LLM inference for keyword expansion, not internet searches.
-
-### DOSSIER / Meeting Prep / Person Research:
-When a user wants a meeting prep dossier, background brief, or person research:
-
-**CRITICAL WORKFLOW - ALWAYS follow this order:**
-1. **Check first**: ALWAYS call `dossier_check_status` FIRST to see if there is already an active dossier session.
-2. **If status is "generated"**: The dossier is ready. Use `dossier_get_document` to retrieve it.
-3. **If status is "collecting"/"researching"/"analyzing"**: The dossier is still being generated. Inform the user and wait.
-4. **If no session exists**: Call `dossier_generate` with the person's name, optional LinkedIn URL, and meeting context. If the user is researching THEMSELVES, set `is_self_lookup=True` to use their connected LinkedIn account for rich profile data.
-5. **To update**: Use `dossier_update` to add new meeting context and regenerate strategic insights without re-collecting data.
-6. **To delete**: Use `dossier_delete` to remove a dossier session and free resources.
-
-**Important Dossier Rules:**
-- The dossier includes: biographical context, career highlights, recent statements, known associates, relationship map, conversation starters, common ground, topics to avoid, and meeting strategy.
-- Always ask for the person's full name at minimum. LinkedIn URL and meeting context are optional but improve results.
-- The generated dossier can be sent via email or converted to PDF using the existing PDF tools.
-
-### LinkedIn Integration:
-When a user wants to post on LinkedIn or manage LinkedIn content:
-
-**CRITICAL WORKFLOW - ALWAYS follow this order:**
-1. **Get author info first**: ALWAYS call `linkedin_get_my_info` FIRST to get the user's author_id (URN). This is REQUIRED for creating posts.
-2. **Create post**: Use `linkedin_create_post` with the author URN from step 1, the post text, and visibility (default: PUBLIC).
-3. **For company posts**: Call `linkedin_get_company_info` first to get the organization URN, then use that as the author parameter.
-4. **Delete post**: Use `linkedin_delete_post` with the share_id of the post to delete.
-
-**Important LinkedIn Rules:**
-- ALWAYS get the author URN via `linkedin_get_my_info` before creating a post. Never guess the URN.
-- For organization posts, the author URN format is 'urn:li:organization:{id}'.
-- Default visibility is PUBLIC. Ask user if they want CONNECTIONS-only visibility.
-- The post commentary supports plain text and @-mentions.
-
-## QUALITY STANDARDS:
-- PDF Reports: Minimum 3-5 pages of substantial content
-- Political Analysis: Minimum 5 quotes with full citations
-- Quote Visualizations: AI-generated images for up to 5 most significant quotes (automatic)
-- Fact-Checking: Multiple sources, conflicting info highlighted
-- Structure: Clear headings, bullet points, tables where appropriate
-- Tone: Professional, objective, evidence-based
-- Visual Appeal: PDF includes professional imagery for political quotes when available
-"""
 
 
 async def chat(
@@ -1505,6 +718,7 @@ async def chat(
     user_id: str,
     conversation_history: list = None,
     auto_execute: bool = True,
+    session_id: str = "default",
 ) -> dict:
     """
     LangGraph-based Agent Chat (Blocking).
@@ -1568,6 +782,16 @@ async def chat(
         # If there's research context but no explicit tool keywords,
         # still treat as tool intent for better continuity
         is_tool_intent = True
+
+    # AGENT ROUTER: Check if any specialized agent (GIPA, Dossier, etc.) should handle this
+    router_result = await _agent_router.route(
+        message=user_message,
+        user_id=user_id,
+        session_id=session_id,
+        conversation_history=conversation_history,
+    )
+    if router_result:
+        return router_result.to_dict()
 
     if not is_tool_intent:
         # Use Gemini directly for pure generation/QA
@@ -1679,11 +903,30 @@ async def chat_stream(
     groq_api_key: str,
     user_id: str,
     conversation_history: list = None,
+    session_id: str = "default",
 ):
     """
     Stream events from the agent.
     Yields JSON strings: {type: "log"|"final", ...}
     """
+    # AGENT ROUTER: Check if any specialized agent should handle this
+    _router_result = await _agent_router.route(
+        message=user_message,
+        user_id=user_id,
+        session_id=session_id,
+        conversation_history=conversation_history,
+    )
+    if _router_result:
+        yield json.dumps({
+            "type": "log",
+            "status": "running",
+            "title": f"{_router_result.agent_name.upper()} Handler",
+            "detail": f"Processing via {_router_result.agent_name} agent...",
+        }) + "\n"
+        yield json.dumps({"type": "token", "content": _router_result.message}) + "\n"
+        yield json.dumps({"type": "final_result", "message": _router_result.message}) + "\n"
+        return
+
     tools = get_agent_tools(user_id)
 
     def create_agent(llm, provider_name):
