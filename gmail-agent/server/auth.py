@@ -34,9 +34,13 @@ def create_auth_config(composio_client: Composio):
     )
 
 
-def create_connection(
+def connect_gmail(
     composio_client: Composio, user_id: str, auth_config_id: Optional[str] = None
 ):
+    """
+    Initiate connection for GMAIL.
+    If auth_config_id is not provided, it attempts to use or create a default custom auth config.
+    """
     if not auth_config_id:
         auth_config = fetch_auth_config(composio_client=composio_client)
         if not auth_config:
@@ -52,6 +56,10 @@ def create_connection(
         connection_params["auth_config_id"] = auth_config_id
 
     return composio_client.connected_accounts.initiate(**connection_params)
+
+
+# Legacy alias for backward compatibility (can be deprecated later)
+create_connection = connect_gmail
 
 
 def check_connected_account_exists(
@@ -148,6 +156,26 @@ def create_social_connection(composio_client: Composio, user_id: str, toolkit: s
 
     except Exception as e:
         raise Exception(f"Failed to initiate {toolkit} connection: {str(e)}")
+
+
+def connect_twitter(composio_client: Composio, user_id: str):
+    """Initiate connection for TWITTER."""
+    return create_social_connection(composio_client, user_id, "TWITTER")
+
+
+def connect_facebook(composio_client: Composio, user_id: str):
+    """Initiate connection for FACEBOOK."""
+    return create_social_connection(composio_client, user_id, "FACEBOOK")
+
+
+def connect_instagram(composio_client: Composio, user_id: str):
+    """Initiate connection for INSTAGRAM."""
+    return create_social_connection(composio_client, user_id, "INSTAGRAM")
+
+
+def connect_linkedin(composio_client: Composio, user_id: str):
+    """Initiate connection for LINKEDIN."""
+    return create_social_connection(composio_client, user_id, "LINKEDIN")
 
 
 def get_connection_status(composio_client: Composio, connection_id: str):

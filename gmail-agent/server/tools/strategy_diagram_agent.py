@@ -875,6 +875,21 @@ def get_strategy_diagram_tools():
     ]
 
 
+def get_strategy_tools() -> list:
+    """Get all strategy diagram tools."""
+    return [
+        create_strategy_diagram,
+        analyze_strategic_prompt,
+        generate_mermaid_diagram,
+        generate_graphviz_diagram,
+        validate_diagram_code,
+        convert_mermaid_to_image,
+        render_mermaid_online,
+        preview_mermaid_diagram,
+        get_diagram_image_url,
+    ]
+
+
 __all__ = [
     "create_strategy_diagram",
     "analyze_strategic_prompt",
