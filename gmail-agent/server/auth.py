@@ -75,6 +75,11 @@ def check_connected_account_exists(
     return False
 
 
+def check_gmail_connected(composio_client: Composio, user_id: str) -> bool:
+    """Check if Gmail account is connected for user."""
+    return check_connected_account_exists(composio_client, user_id, "GMAIL")
+
+
 def check_twitter_connected(composio_client: Composio, user_id: str) -> bool:
     """Check if Twitter account is connected for user."""
     return check_connected_account_exists(composio_client, user_id, "TWITTER")
