@@ -13,19 +13,35 @@ Usage:
     result = await router.route(message, user_id="default")
 """
 
-from server.agents.base import BaseAgent, AgentContext, AgentResponse
-from server.agents.registry import AgentRegistry
-from server.agents.router import AgentRouter
+from .core.base import BaseAgent, AgentContext, AgentResponse
+from .core.registry import AgentRegistry
+from .core.router import AgentRouter
 
 
 def create_default_registry() -> AgentRegistry:
     """Create registry with all available agents pre-registered."""
-    from server.agents.gipa import GIPAPluginAgent
-    from server.agents.dossier import DossierPluginAgent
+    from .gipa import GIPAPluginAgent
+    from .dossier import DossierPluginAgent
+    from .email_analyst import EmailAnalystPluginAgent
+    from .pdf import PDFPluginAgent
+    from .research import ResearchPluginAgent
+    from .social_media import SocialMediaPluginAgent
+    from .gmail import GmailPluginAgent
+    from .linkedin import LinkedInPluginAgent
+    from .quote import QuotePluginAgent
+    from .strategy import StrategyPluginAgent
 
     registry = AgentRegistry()
     registry.register(GIPAPluginAgent())
     registry.register(DossierPluginAgent())
+    registry.register(EmailAnalystPluginAgent())
+    registry.register(PDFPluginAgent())
+    registry.register(ResearchPluginAgent())
+    registry.register(SocialMediaPluginAgent())
+    registry.register(GmailPluginAgent())
+    registry.register(LinkedInPluginAgent())
+    registry.register(QuotePluginAgent())
+    registry.register(StrategyPluginAgent())
     return registry
 
 
